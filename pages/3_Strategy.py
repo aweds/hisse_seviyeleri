@@ -4,12 +4,12 @@ import plotly.express as px
 import streamlit as st
 
 from data import fetch_ohlcv, normalize_ticker
-from indicators import kama, stochastic_rsi
+from indicators import kama, stochastic_rsi, wilders_smoothing
 from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("RSI / Stoch RSI Aşırı Satım Dönüşü + KAMA Filtresi stratejisinin geçmiş performansı")
+st.caption("RSI / Stoch RSI Aşırı Satım Dönüşü + KAMA ve Wilders Filtreleri")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
@@ -19,20 +19,23 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Gösterge Seçimi Sidebar'a taşındı
     gosterge_secimi = st.radio("Kullanılacak Gösterge", ["RSI", "Stoch RSI"])
     
     st.markdown("**1. Gösterge Kuralı**")
-    # Eşik değerini seçime göre otomatik ayarla (RSI için 30, Stoch için 20)
     varsayilan_esik = 30 if gosterge_secimi == "RSI" else 20
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
+    ind_length = st.number_input("Gösterge Periyodu", value=14)
     
-    ind_length = st.number_input("İndikatör Periyodu", value=14)
+    st.markdown("**2. KAMA Filtresi**")
+    use_kama = st.checkbox("Fiyat KAMA'nın üzerinde olsun", value=True)
+    kama_length = st.number_input("KAMA Periyodu", value=10, disabled=not use_kama)
     
-    st.markdown("**2. KAMA Kuralı**")
-    kama_length = st.number_input("KAMA Periyodu", value=10)
+    st.markdown("**3. Wilders Filtresi**")
+    use_wilders = st.checkbox("Fiyat Wilders'ın üzerinde olsun", value=True)
+    wilders_length = st.number_input("Wilders Periyodu", value=14, disabled=not use_wilders)
     
-    st.markdown("**3. Hedef**")
+    st.markdown("---")
+    st.markdown("**4. Hedef**")
     hold_days = st.number_input("Kaç gün sonra satılsın?", value=10)
     
     run = st.button("▶️ Stratejiyi Test Et", type="primary", use_container_width=True)
@@ -49,6 +52,7 @@ if run:
     # Göstergeleri hesapla
     df["RSI"] = rsi(df, ind_length)
     df["KAMA"] = kama(df["Close"], kama_length)
+    df["Wilders"] = wilders_smoothing(df["Close"], wilders_length)
     df["Stoch_RSI"] = stochastic_rsi(df["Close"], ind_length)
     
     if gosterge_secimi == "RSI":
@@ -56,17 +60,28 @@ if run:
     else:
         current_ind = df["Stoch_RSI"]
         
-    # Sinyal Mantığı
-    df["Signal"] = (
-        (current_ind.shift(1) < esik) & 
-        (current_ind >= esik) & 
-        (df["Close"] > df["KAMA"])
-    )
+    # 1. Temel Sinyal: Gösterge aşağıdan yukarı kesti mi?
+    base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
+    
+    # 2. KAMA Şartı
+    if use_kama:
+        kama_condition = df["Close"] > df["KAMA"]
+    else:
+        kama_condition = pd.Series(True, index=df.index) # True döner, filtreyi atlar
+        
+    # 3. Wilders Şartı
+    if use_wilders:
+        wilders_condition = df["Close"] > df["Wilders"]
+    else:
+        wilders_condition = pd.Series(True, index=df.index)
+        
+    # Tüm şartları birleştir
+    df["Signal"] = base_signal & kama_condition & wilders_condition
     
     signals = df[df["Signal"]].index
     
     if len(signals) == 0:
-        st.warning("Seçilen kriterlere uyan hiçbir alım sinyali bulunamadı. Eşik değerlerini düşürmeyi deneyin.")
+        st.warning("Seçilen kriterlere uyan hiçbir alım sinyali bulunamadı. Filtreleri kapatmayı veya eşik değerini düşürmeyi deneyin.")
         st.stop()
         
     # Sonuçları hesapla
@@ -92,13 +107,13 @@ if run:
         st.warning("Sinyal bulundu ama test edilecek kadar ilerisi yok (veri sonu).")
         st.stop()
         
-    # Sonuçları hafızaya (session_state) kaydet
+    # Sonuçları hafızaya kaydet
     st.session_state["bt_res_df"] = res_df
     st.session_state["bt_ticker"] = ticker
     st.session_state["bt_hold_days"] = hold_days
     st.session_state["bt_ind_name"] = gosterge_secimi
 
-# --- EKRANA ÇİZİM KISMI (Hafızadaki veriyi okur) ---
+# --- EKRANA ÇİZİM KISMI ---
 if "bt_res_df" in st.session_state:
     res_df = st.session_state["bt_res_df"]
     ticker = st.session_state["bt_ticker"]
@@ -126,6 +141,3 @@ if "bt_res_df" in st.session_state:
         color="Başarılı mı?", color_discrete_map={"Evet": "#2e7d32", "Hayır": "#c62828"}
     )
     st.plotly_chart(fig, use_container_width=True)
-
-    # Bilgi Notu
-    st.info("💡 **Not:** Bu tablo, seçtiğiniz gösterge ve ayarlarla geçmişte üretilen **tüm sinyalleri** gösterir. Yüzde 100 doğruluk yoktur, amaç stratejinin geçmişteki istatistiğini görmektir.")
