@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from data import fetch_ohlcv, normalize_ticker
@@ -9,7 +10,7 @@ from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Stoch RSI + KAMA + Wilders + Stop-Loss & Kâr Al (Pozisyon Kapatma Kurallı)")
+st.caption("Sermaye, Lot, Komisyon ve Kâr/Zarar Simülasyonu")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
@@ -18,26 +19,26 @@ with st.sidebar:
     period = st.selectbox("Test Periyodu", ["1y", "2y", "5y"], index=1)
     
     st.markdown("---")
-    
     gosterge_secimi = st.radio("Kullanılacak Gösterge", ["RSI", "Stoch RSI"])
-    
-    st.markdown("**1. Gösterge Kuralı**")
-    varsayilan_esik = 30 if gosterge_secimi == "RSI" else 30
+    varsayilan_esik = 30
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
     ind_length = st.number_input("Gösterge Periyodu", value=14)
     
-    st.markdown("**2. Filtreler**")
+    st.markdown("**Filtreler**")
     use_kama = st.checkbox("Fiyat KAMA'nın üzerinde olsun", value=True)
     kama_length = st.number_input("KAMA Periyodu", value=10, disabled=not use_kama)
-    
     use_wilders = st.checkbox("Fiyat Wilders'ın üzerinde olsun", value=True)
     wilders_length = st.number_input("Wilders Periyodu", value=14, disabled=not use_wilders)
     
     st.markdown("---")
-    st.markdown("**3. Risk Yönetimi (Çıkış Stratejisi)**")
-    hold_days = st.number_input("Kaç gün sonra satılsın? (Maksimum)", value=30)
-    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0)
-    take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=30.0, step=1.0)
+    st.markdown("**💰 Sermaye ve Risk**")
+    baslangic_sermayesi = st.number_input("Başlangıç Sermayesi (TL)", value=100000, step=10000)
+    komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.1, step=0.1, help="Örn: Binde 1 = 0.1")
+    
+    st.markdown("**Çıkış Stratejisi**")
+    hold_days = st.number_input("Maksimum Gün", value=20)
+    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=4.0, step=1.0)
+    take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=25.0, step=1.0)
     
     run = st.button("▶️ Stratejiyi Test Et", type="primary", use_container_width=True)
 
@@ -55,30 +56,28 @@ if run:
     df["Wilders"] = wilders_smoothing(df["Close"], wilders_length)
     df["Stoch_RSI"] = stochastic_rsi(df["Close"], ind_length)
     
-    if gosterge_secimi == "RSI":
-        current_ind = df["RSI"]
-    else:
-        current_ind = df["Stoch_RSI"]
-        
+    current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
     base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
-    
     kama_condition = df["Close"] > df["KAMA"] if use_kama else pd.Series(True, index=df.index)
     wilders_condition = df["Close"] > df["Wilders"] if use_wilders else pd.Series(True, index=df.index)
-        
     df["Signal"] = base_signal & kama_condition & wilders_condition
     
-    # --- YENİ MANTIK: POZİSYON KONTROLÜ VE GAP KONTROLÜ ---
     results = []
     in_position = False
     entry_idx = None
     entry_price = 0
     stop_price = 0
     target_price = 0
+    lot = 0
+    maliyet = 0
+    
+    current_sermaye = baslangic_sermayesi
+    komisyon_orani = komisyon_pct / 100.0
     
     for i in range(len(df)):
         current_date = df.index[i]
         
-        # Eğer açık bir pozisyon varsa, çıkış şartlarına bak
+        # 1. AÇIK POZİSYON VARSA ÇIKIŞ KONTROLÜ
         if in_position:
             days_held = i - entry_idx
             low_price = df["Low"].iloc[i]
@@ -90,48 +89,46 @@ if run:
             exit_price = 0
             exit_reason = ""
             
-            # 1. Stop-Loss Kontrolü (Kötü senaryo önce kontrol edilir)
             if low_price <= stop_price:
-                # Eğer gün, stop fiyatının altında açıldıysa (Gap Down), açılıştan satılır
-                if open_price <= stop_price:
-                    exit_price = open_price
-                else:
-                    exit_price = stop_price
+                exit_price = open_price if open_price <= stop_price else stop_price
                 exit_reason = "Stop-Loss"
                 exit_triggered = True
-                
-            # 2. Kâr Al Kontrolü
             elif high_price >= target_price:
-                # Eğer gün, hedef fiyatın üzerinde açıldıysa (Gap Up), açılıştan satılır
-                if open_price >= target_price:
-                    exit_price = open_price
-                else:
-                    exit_price = target_price
+                exit_price = open_price if open_price >= target_price else target_price
                 exit_reason = "Kâr Al"
                 exit_triggered = True
-                
-            # 3. Süre Doldu Kontrolü
             elif days_held >= hold_days:
                 exit_price = close_price
                 exit_reason = "Süre Doldu"
                 exit_triggered = True
                 
             if exit_triggered:
-                getiri = (exit_price - entry_price) / entry_price * 100
+                # Komisyon ve Net Kâr Hesaplaması
+                satis_tutari = lot * exit_price
+                komisyon_satis = satis_tutari * komisyon_orani
+                net_ele_gecen = satis_tutari - komisyon_satis
+                
+                net_kar_tl = net_ele_gecen - maliyet
+                getiri_pct = (net_kar_tl / maliyet) * 100
+                
+                current_sermaye += net_kar_tl
+                
                 results.append({
                     "Giriş Tarihi": df.index[entry_idx].strftime("%Y-%m-%d"),
                     "Çıkış Tarihi": current_date.strftime("%Y-%m-%d"),
                     "Giriş Fiyatı": round(entry_price, 2),
                     "Çıkış Fiyatı": round(exit_price, 2),
+                    "Lot": lot,
+                    "Net Kâr/Zarar (TL)": round(net_kar_tl, 2),
+                    "Getiri (%)": round(getiri_pct, 2),
                     "Çıkış Nedeni": exit_reason,
                     "Gün": days_held,
-                    "Getiri (%)": round(getiri, 2),
-                    "Başarılı mı?": "Evet" if getiri > 0 else "Hayır"
+                    "Kalan Sermaye": round(current_sermaye, 2)
                 })
                 in_position = False
-                continue # Pozisyon kapandı, aynı gün yeni işlem açma, sonraki güne geç
+                continue
                 
-        # Eğer açık pozisyon yoksa ve yeni sinyal geldiyse pozisyon aç
+        # 2. YENİ POZİSYON AÇMA
         if not in_position and df["Signal"].iloc[i]:
             in_position = True
             entry_idx = i
@@ -139,38 +136,74 @@ if run:
             stop_price = entry_price * (1 - stop_loss_pct / 100)
             target_price = entry_price * (1 + take_profit_pct / 100)
             
+            # Alış İşlemi ve Lot Hesabı
+            islem_tutari = current_sermaye
+            komisyon_alis = islem_tutari * komisyon_orani
+            efektif_tutar = islem_tutari - komisyon_alis
+            lot = int(efektif_tutar / entry_price) # Tam sayı lot (BIST kuralı)
+            maliyet = (lot * entry_price) + (lot * entry_price * komisyon_orani)
+            current_sermaye -= maliyet # Parayı cebimizden çıkardık
+
     res_df = pd.DataFrame(results)
     
     if res_df.empty:
-        st.warning("Hiç işlem üretilmedi veya test edilecek veri kalmadı.")
+        st.warning("Hiç işlem üretilmedi.")
         st.stop()
         
     st.session_state["bt_res_df"] = res_df
     st.session_state["bt_ticker"] = ticker
+    st.session_state["bt_baslangic"] = baslangic_sermayesi
     st.session_state["bt_ind_name"] = gosterge_secimi
+    st.session_state["bt_signal_active"] = df["Signal"].iloc[-1] or in_position
+    st.session_state["bt_active_details"] = {
+        "entry": entry_price if in_position else df["Close"].iloc[-1],
+        "stop": stop_price if in_position else df["Close"].iloc[-1] * (1 - stop_loss_pct / 100),
+        "target": target_price if in_position else df["Close"].iloc[-1] * (1 + take_profit_pct / 100),
+        "lot": lot if in_position else int(current_sermaye / df["Close"].iloc[-1]),
+        "sermaye": current_sermaye
+    }
 
 # --- EKRANA ÇİZİM KISMI ---
 if "bt_res_df" in st.session_state:
     res_df = st.session_state["bt_res_df"]
     ticker = st.session_state["bt_ticker"]
+    baslangic = st.session_state["bt_baslangic"]
     ind_name = st.session_state["bt_ind_name"]
     
-    win_rate = (res_df["Getiri (%)"] > 0).mean() * 100
-    avg_return = res_df["Getiri (%)"].mean()
+    son_sermaye = res_df["Kalan Sermaye"].iloc[-1]
+    toplam_kar = son_sermaye - baslangic
+    toplam_getiri = (toplam_kar / baslangic) * 100
+    win_rate = (res_df["Net Kâr/Zarar (TL)"] > 0).mean() * 100
     
-    st.subheader(f"📌 {ticker} — {ind_name} Strateji Sonuçları")
+    st.subheader(f"📌 {ticker} — Portföy Sonuçları")
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Toplam İşlem", len(res_df))
-    c2.metric("Başarı Oranı (Win Rate)", f"%{win_rate:.1f}")
-    c3.metric("Ort. Getiri", f"%{avg_return:.2f}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Başlangıç Sermayesi", f"{baslangic:,.0f} TL")
+    c2.metric("Son Sermaye", f"{son_sermaye:,.0f} TL", f"%{toplam_getiri:.1f}")
+    c3.metric("Toplam Net Kâr", f"{toplam_kar:,.0f} TL")
+    c4.metric("Başarı Oranı", f"%{win_rate:.1f}", f"{len(res_df)} İşlem")
+
+    # --- SİNYAL DURUMU KARTI ---
+    act = st.session_state["bt_active_details"]
+    st.markdown("### 🎯 Son Durum ve Aksiyon Planı")
+    st.info(f"**Sistem Şu Anki Fiyat:** {act['entry']:.2f} TL | **Kalan Nakit:** {act['sermaye']:,.0f} TL")
     
-    st.markdown("#### Detaylı İşlem Geçmişi")
+    colA, colB, colC = st.columns(3)
+    colA.error(f"🛑 **Stop-Loss (Nereden Çıkılır?)**\n\nFiyat: {act['stop']:.2f} TL\n\nZarar: -%{((act['stop']/act['entry'])-1)*-100:.1f}")
+    colB.success(f"🎯 **Kâr Al (Hedef)**\n\nFiyat: {act['target']:.2f} TL\n\nKâr: +%{((act['target']/act['entry'])-1)*100:.1f}")
+    colC.info(f"📦 **Lot & Potansiyel**\n\nAlınacak Lot: {act['lot']}\n\nBeklenen Kâr: {act['lot'] * (act['target']-act['entry']):,.0f} TL")
+
+    # --- SERMAYE EĞRİSİ (EQUITY CURVE) ---
+    st.markdown("### 📈 Sermaye Büyüme Grafiği")
+    eq_df = res_df[["Çıkış Tarihi", "Kalan Sermaye"]].copy()
+    eq_df.loc[-1] = ["Başlangıç", baslangic]
+    eq_df.index = eq_df.index + 1
+    eq_df = eq_df.sort_index()
+    
+    fig_eq = px.line(eq_df, x="Çıkış Tarihi", y="Kalan Sermaye", markers=True, 
+                     title="Paranızın Zaman İçindeki Değişimi (Bileşik Getiri)")
+    fig_eq.update_traces(line_color="#2e7d32", line_width=3)
+    st.plotly_chart(fig_eq, use_container_width=True)
+
+    st.markdown("#### Detaylı İşlem Defteri (TL ve Lot Bazında)")
     st.dataframe(res_df, use_container_width=True, hide_index=True)
-    
-    fig = px.histogram(
-        res_df, x="Getiri (%)", nbins=20, 
-        title="İşlem Başına Getiri Dağılımı",
-        color="Başarılı mı?", color_discrete_map={"Evet": "#2e7d32", "Hayır": "#c62828"}
-    )
-    st.plotly_chart(fig, use_container_width=True)
