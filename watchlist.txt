@@ -1,0 +1,5 @@
+# Her satıra bir sembol. BIST için .IS otomatik eklenir.
+# Yorumlar # ile başlar.
+PATEK
+THYAO
+ASELS
