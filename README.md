@@ -12,6 +12,23 @@ Streamlit tabanlı, BIST hisseleri için otomatik **destek/direnç** ve **alım-
 - Risk yüzdesine göre otomatik lot hesabı
 - CSV dışa aktarma
 
+- 
+---
+
+## `.gitignore`
+
+```gitignore
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.streamlit/secrets.toml
+.DS_Store
+*.csv
+
+
+
 ## Kurulum
 ```bash
 git clone https://github.com/<kullanici>/patek-levels-app.git
