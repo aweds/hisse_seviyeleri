@@ -142,16 +142,13 @@ if "bt_res_df" in st.session_state:
     c2.metric("Başarı Oranı (Win Rate)", f"%{win_rate:.1f}")
     c3.metric("Ort. Getiri", f"%{avg_return:.2f}")
     
-    st.markdown("#### Detaylı İşlem Geçmişi")
-    # Çıkış nedenlerine göre renklendirme (Görsel şölen)
-    def highlight_reason(val):
-        if val == "Kâr Al": return 'color: green; font-weight: bold'
-        elif val == "Stop-Loss": return 'color: red; font-weight: bold'
-        return ''
+        st.markdown("#### Detaylı İşlem Geçmişi")
     
+    # Hata veren renklendirme kaldırıldı, doğrudan tablo basılıyor
     st.dataframe(
-        res_df.style.map(highlight_reason, subset=["Çıkış Nedeni"]), 
-        use_container_width=True, hide_index=True
+        res_df, 
+        use_container_width=True, 
+        hide_index=True
     )
     
     fig = px.histogram(
