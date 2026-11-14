@@ -81,14 +81,24 @@ if "bt_results" in st.session_state:
     kaynak = sums["Kaynak"][sums["Kaynak"]["Test"] >= 3].sort_values("Test", ascending=False)
     st.dataframe(kaynak, use_container_width=True, hide_index=True)
 
+    # --- GRAFİK ÇİZİM KISMI DÜZELTİLDİ ---
     if not kaynak.empty:
-        fig = px.bar(
-            kaynak.sort_values("Tutma %").tail(15),
-            x="Tutma %", y="Kaynak", orientation="h",
-            color="Test", text="Test",
-            title="Kaynak bazında tutma oranı (%)",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        plot_df = kaynak.copy()
+        plot_df = plot_df.dropna(subset=["Tutma %"])
+        
+        if not plot_df.empty:
+            fig = px.bar(
+                plot_df.sort_values("Tutma %").tail(15),
+                x="Tutma %", 
+                y="sources",  # Sütun adı 'sources' olarak sabitlendi
+                orientation="h",
+                color="Test", 
+                text="Test",
+                title="Kaynak bazında tutma oranı (%)",
+                labels={"sources": "Kaynak", "Tutma %": "Tutma Oranı (%)"} # Etiketler Türkçeleştirildi
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    # -------------------------------------
 
     st.markdown("#### Zaman Serisi (aylık)")
     results = results.copy()
