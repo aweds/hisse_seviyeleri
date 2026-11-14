@@ -9,7 +9,7 @@ from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Stoch RSI + KAMA + Wilders + Stop-Loss & Kâr Al")
+st.caption("Stoch RSI + KAMA + Wilders + Stop-Loss & Kâr Al (Pozisyon Kapatma Kurallı)")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
@@ -22,7 +22,7 @@ with st.sidebar:
     gosterge_secimi = st.radio("Kullanılacak Gösterge", ["RSI", "Stoch RSI"])
     
     st.markdown("**1. Gösterge Kuralı**")
-    varsayilan_esik = 30 if gosterge_secimi == "RSI" else 20
+    varsayilan_esik = 30 if gosterge_secimi == "RSI" else 30
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
     ind_length = st.number_input("Gösterge Periyodu", value=14)
     
@@ -35,9 +35,9 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("**3. Risk Yönetimi (Çıkış Stratejisi)**")
-    hold_days = st.number_input("Kaç gün sonra satılsın? (Maksimum)", value=10)
-    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=5.0, step=1.0)
-    take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=10.0, step=1.0)
+    hold_days = st.number_input("Kaç gün sonra satılsın? (Maksimum)", value=30)
+    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0)
+    take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=30.0, step=1.0)
     
     run = st.button("▶️ Stratejiyi Test Et", type="primary", use_container_width=True)
 
@@ -67,58 +67,82 @@ if run:
         
     df["Signal"] = base_signal & kama_condition & wilders_condition
     
-    signals = df[df["Signal"]].index
-    
-    if len(signals) == 0:
-        st.warning("Seçilen kriterlere uyan hiçbir alım sinyali bulunamadı.")
-        st.stop()
-        
+    # --- YENİ MANTIK: POZİSYON KONTROLÜ VE GAP KONTROLÜ ---
     results = []
-    for sig_date in signals:
-        idx = df.index.get_loc(sig_date)
-        if idx + hold_days < len(df):
-            entry_price = df["Close"].iloc[idx]
+    in_position = False
+    entry_idx = None
+    entry_price = 0
+    stop_price = 0
+    target_price = 0
+    
+    for i in range(len(df)):
+        current_date = df.index[i]
+        
+        # Eğer açık bir pozisyon varsa, çıkış şartlarına bak
+        if in_position:
+            days_held = i - entry_idx
+            low_price = df["Low"].iloc[i]
+            high_price = df["High"].iloc[i]
+            close_price = df["Close"].iloc[i]
+            open_price = df["Open"].iloc[i]
             
-            # Hedef ve Stop Fiyatlarını Hesapla
+            exit_triggered = False
+            exit_price = 0
+            exit_reason = ""
+            
+            # 1. Stop-Loss Kontrolü (Kötü senaryo önce kontrol edilir)
+            if low_price <= stop_price:
+                # Eğer gün, stop fiyatının altında açıldıysa (Gap Down), açılıştan satılır
+                if open_price <= stop_price:
+                    exit_price = open_price
+                else:
+                    exit_price = stop_price
+                exit_reason = "Stop-Loss"
+                exit_triggered = True
+                
+            # 2. Kâr Al Kontrolü
+            elif high_price >= target_price:
+                # Eğer gün, hedef fiyatın üzerinde açıldıysa (Gap Up), açılıştan satılır
+                if open_price >= target_price:
+                    exit_price = open_price
+                else:
+                    exit_price = target_price
+                exit_reason = "Kâr Al"
+                exit_triggered = True
+                
+            # 3. Süre Doldu Kontrolü
+            elif days_held >= hold_days:
+                exit_price = close_price
+                exit_reason = "Süre Doldu"
+                exit_triggered = True
+                
+            if exit_triggered:
+                getiri = (exit_price - entry_price) / entry_price * 100
+                results.append({
+                    "Giriş Tarihi": df.index[entry_idx].strftime("%Y-%m-%d"),
+                    "Çıkış Tarihi": current_date.strftime("%Y-%m-%d"),
+                    "Giriş Fiyatı": round(entry_price, 2),
+                    "Çıkış Fiyatı": round(exit_price, 2),
+                    "Çıkış Nedeni": exit_reason,
+                    "Gün": days_held,
+                    "Getiri (%)": round(getiri, 2),
+                    "Başarılı mı?": "Evet" if getiri > 0 else "Hayır"
+                })
+                in_position = False
+                continue # Pozisyon kapandı, aynı gün yeni işlem açma, sonraki güne geç
+                
+        # Eğer açık pozisyon yoksa ve yeni sinyal geldiyse pozisyon aç
+        if not in_position and df["Signal"].iloc[i]:
+            in_position = True
+            entry_idx = i
+            entry_price = df["Close"].iloc[i]
             stop_price = entry_price * (1 - stop_loss_pct / 100)
             target_price = entry_price * (1 + take_profit_pct / 100)
-            
-            exit_price = df["Close"].iloc[idx + hold_days]
-            exit_reason = "Süre Doldu"
-            days_held = hold_days
-            
-            # Gün gün ilerleyip Stop veya Target'a değdi mi kontrol et
-            for i in range(1, hold_days + 1):
-                low_price = df["Low"].iloc[idx + i]
-                high_price = df["High"].iloc[idx + i]
-                
-                if low_price <= stop_price:
-                    exit_price = stop_price
-                    exit_reason = "Stop-Loss"
-                    days_held = i
-                    break
-                elif high_price >= target_price:
-                    exit_price = target_price
-                    exit_reason = "Kâr Al"
-                    days_held = i
-                    break
-            
-            getiri = (exit_price - entry_price) / entry_price * 100
-            
-            results.append({
-                "Tarih": sig_date.strftime("%Y-%m-%d"),
-                "Giriş Fiyatı": round(entry_price, 2),
-                "Çıkış Fiyatı": round(exit_price, 2),
-                "Çıkış Nedeni": exit_reason,
-                "Gün": days_held,
-                "Getiri (%)": round(getiri, 2),
-                "Başarılı mı?": "Evet" if getiri > 0 else "Hayır"
-            })
             
     res_df = pd.DataFrame(results)
     
     if res_df.empty:
-        st.warning("Sinyal bulundu ama test edilecek kadar ilerisi yok (veri sonu).")
+        st.warning("Hiç işlem üretilmedi veya test edilecek veri kalmadı.")
         st.stop()
         
     st.session_state["bt_res_df"] = res_df
@@ -137,18 +161,12 @@ if "bt_res_df" in st.session_state:
     st.subheader(f"📌 {ticker} — {ind_name} Strateji Sonuçları")
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("Toplam Sinyal", len(res_df))
+    c1.metric("Toplam İşlem", len(res_df))
     c2.metric("Başarı Oranı (Win Rate)", f"%{win_rate:.1f}")
     c3.metric("Ort. Getiri", f"%{avg_return:.2f}")
     
     st.markdown("#### Detaylı İşlem Geçmişi")
-    
-    # Renklendirme tamamen kaldırıldı, hata vermez.
-    st.dataframe(
-        res_df, 
-        use_container_width=True, 
-        hide_index=True
-    )
+    st.dataframe(res_df, use_container_width=True, hide_index=True)
     
     fig = px.histogram(
         res_df, x="Getiri (%)", nbins=20, 
