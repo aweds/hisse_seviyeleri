@@ -42,12 +42,20 @@ if run:
     df["KAMA"] = kama(df["Close"], kama_length)
     df["Stoch_RSI"] = stochastic_rsi(df["Close"])
     
-    # Sinyal Mantığı
-    # 1. Dün RSI eşiğin altındaydı, bugün üstüne çıktı (Dönüş)
-    # 2. Fiyat KAMA'nın üzerinde (Trend yukarı)
+       # --- YENİ: Kullanıcıya Gösterge Seçimi Sunalım ---
+    gosterge_secimi = st.radio("Hangi gösterge kullanılsın?", ["RSI", "Stoch RSI"], horizontal=True)
+    
+    if gosterge_secimi == "RSI":
+        esik = rsi_threshold
+        current_ind = df["RSI"]
+    else:
+        esik = 20  # Stoch RSI için standart aşırı satım eşiği
+        current_ind = df["Stoch_RSI"]
+        
+    # Sinyal Mantığı: Seçilen göstergenin dün eşiğin altında, bugün üstünde olması VE KAMA üzerinde olması
     df["Signal"] = (
-        (df["RSI"].shift(1) < rsi_threshold) & 
-        (df["RSI"] >= rsi_threshold) & 
+        (current_ind.shift(1) < esik) & 
+        (current_ind >= esik) & 
         (df["Close"] > df["KAMA"])
     )
     
