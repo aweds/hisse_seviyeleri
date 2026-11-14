@@ -1,0 +1,63 @@
+name: Daily Level Report
+
+on:
+  schedule:
+    # BIST kapanış sonrası ~18:30 TR = 15:30 UTC, hafta içi
+    - cron: "30 15 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Bağımlılıkları yükle
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Raporu üret
+        run: python report.py --watchlist watchlist.txt --out reports
+
+      - name: Artifact olarak yükle (her zaman)
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 30
+
+      - name: Repoya commit et (opsiyonel)
+        if: vars.PUSH_REPORT == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/
+          git diff --cached --quiet || git commit -m "chore(report): $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Telegram bildirimi (opsiyonel)
+        if: vars.TELEGRAM_ENABLED == 'true'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+            echo "Telegram secrets tanımlı değil, atlıyorum."; exit 0
+          fi
+          HEAD=$(head -c 3500 reports/latest.md)
+          curl -sS -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$TG_CHAT" \
+            --data-urlencode "text=$HEAD" \
+            --data-urlencode "disable_web_page_preview=true" > /dev/null
+          echo "Telegram mesajı gönderildi."
