@@ -9,17 +9,25 @@ from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("RSI Aşırı Satım Dönüşü + KAMA Filtresi stratejisinin geçmiş performansı")
+st.caption("RSI / Stoch RSI Aşırı Satım Dönüşü + KAMA Filtresi stratejisinin geçmiş performansı")
 
+# --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
     st.header("⚙️ Strateji Ayarları")
     raw = st.text_input("Hisse", "PATEK")
     period = st.selectbox("Test Periyodu", ["1y", "2y", "5y"], index=1)
     
     st.markdown("---")
-    st.markdown("**1. RSI Kuralı**")
-    rsi_length = st.number_input("RSI Periyodu", value=14)
-    rsi_threshold = st.number_input("Aşırı Satım Eşiği (Altı)", value=30)
+    
+    # Gösterge Seçimi Sidebar'a taşındı
+    gosterge_secimi = st.radio("Kullanılacak Gösterge", ["RSI", "Stoch RSI"])
+    
+    st.markdown("**1. Gösterge Kuralı**")
+    # Eşik değerini seçime göre otomatik ayarla (RSI için 30, Stoch için 20)
+    varsayilan_esik = 30 if gosterge_secimi == "RSI" else 20
+    esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
+    
+    ind_length = st.number_input("İndikatör Periyodu", value=14)
     
     st.markdown("**2. KAMA Kuralı**")
     kama_length = st.number_input("KAMA Periyodu", value=10)
@@ -31,6 +39,7 @@ with st.sidebar:
 
 ticker = normalize_ticker(raw)
 
+# --- HESAPLAMA KISMI ---
 if run:
     df = fetch_ohlcv(ticker, interval="1d", period=period)
     if df.empty or len(df) < 100:
@@ -38,21 +47,16 @@ if run:
         st.stop()
         
     # Göstergeleri hesapla
-    df["RSI"] = rsi(df, rsi_length)
+    df["RSI"] = rsi(df, ind_length)
     df["KAMA"] = kama(df["Close"], kama_length)
-    df["Stoch_RSI"] = stochastic_rsi(df["Close"])
-    
-       # --- YENİ: Kullanıcıya Gösterge Seçimi Sunalım ---
-    gosterge_secimi = st.radio("Hangi gösterge kullanılsın?", ["RSI", "Stoch RSI"], horizontal=True)
+    df["Stoch_RSI"] = stochastic_rsi(df["Close"], ind_length)
     
     if gosterge_secimi == "RSI":
-        esik = rsi_threshold
         current_ind = df["RSI"]
     else:
-        esik = 20  # Stoch RSI için standart aşırı satım eşiği
         current_ind = df["Stoch_RSI"]
         
-    # Sinyal Mantığı: Seçilen göstergenin dün eşiğin altında, bugün üstünde olması VE KAMA üzerinde olması
+    # Sinyal Mantığı
     df["Signal"] = (
         (current_ind.shift(1) < esik) & 
         (current_ind >= esik) & 
@@ -88,11 +92,25 @@ if run:
         st.warning("Sinyal bulundu ama test edilecek kadar ilerisi yok (veri sonu).")
         st.stop()
         
+    # Sonuçları hafızaya (session_state) kaydet
+    st.session_state["bt_res_df"] = res_df
+    st.session_state["bt_ticker"] = ticker
+    st.session_state["bt_hold_days"] = hold_days
+    st.session_state["bt_ind_name"] = gosterge_secimi
+
+# --- EKRANA ÇİZİM KISMI (Hafızadaki veriyi okur) ---
+if "bt_res_df" in st.session_state:
+    res_df = st.session_state["bt_res_df"]
+    ticker = st.session_state["bt_ticker"]
+    hold_days = st.session_state["bt_hold_days"]
+    ind_name = st.session_state["bt_ind_name"]
+    
     # Sonuç Metrikleri
     win_rate = (res_df["Getiri (%)"] > 0).mean() * 100
     avg_return = res_df["Getiri (%)"].mean()
     
-    st.subheader(f"📌 {ticker} — Strateji Sonuçları")
+    st.subheader(f"📌 {ticker} — {ind_name} Strateji Sonuçları")
+    
     c1, c2, c3 = st.columns(3)
     c1.metric("Toplam Sinyal", len(res_df))
     c2.metric("Başarı Oranı (Win Rate)", f"%{win_rate:.1f}")
@@ -108,9 +126,6 @@ if run:
         color="Başarılı mı?", color_discrete_map={"Evet": "#2e7d32", "Hayır": "#c62828"}
     )
     st.plotly_chart(fig, use_container_width=True)
-    
-    # Stoch RSI ve RSI durumunu gösteren alt grafik (Sadece son 100 gün)
-    st.markdown("#### Son 100 Günün Göstergeleri")
-    recent = df.tail(100).copy()
-    fig2 = px.line(recent, y=["RSI", "Stoch_RSI"], title="RSI ve Stoch RSI", labels={"value": "Değer", "index": "Tarih"})
-    st.plotly_chart(fig2, use_container_width=True)
+
+    # Bilgi Notu
+    st.info("💡 **Not:** Bu tablo, seçtiğiniz gösterge ve ayarlarla geçmişte üretilen **tüm sinyalleri** gösterir. Yüzde 100 doğruluk yoktur, amaç stratejinin geçmişteki istatistiğini görmektir.")
