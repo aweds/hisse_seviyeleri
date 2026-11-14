@@ -15,7 +15,7 @@ st.caption("Sermaye, Lot, Komisyon ve Kâr/Zarar Simülasyonu")
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
     st.header("⚙️ Strateji Ayarları")
-    raw = st.text_input("Hisse", "PATEK")
+    raw = st.text_input("Hisse", "ARDYZ")
     period = st.selectbox("Test Periyodu", ["1y", "2y", "5y"], index=1)
     
     st.markdown("---")
@@ -33,11 +33,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**💰 Sermaye ve Risk**")
     baslangic_sermayesi = st.number_input("Başlangıç Sermayesi (TL)", value=100000, step=10000)
-    komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.1, step=0.1, help="Örn: Binde 1 = 0.1")
+    komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.1, step=0.1, help="Binde 1 = 0.1")
     
     st.markdown("**Çıkış Stratejisi**")
-    hold_days = st.number_input("Maksimum Gün", value=20)
-    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=4.0, step=1.0)
+    hold_days = st.number_input("Maksimum Gün", value=15)
+    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0)
     take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=25.0, step=1.0)
     
     run = st.button("▶️ Stratejiyi Test Et", type="primary", use_container_width=True)
@@ -71,7 +71,7 @@ if run:
     lot = 0
     maliyet = 0
     
-    current_sermaye = baslangic_sermayesi
+    kasa_nakit = baslangic_sermayesi
     komisyon_orani = komisyon_pct / 100.0
     
     for i in range(len(df)):
@@ -103,7 +103,7 @@ if run:
                 exit_triggered = True
                 
             if exit_triggered:
-                # Komisyon ve Net Kâr Hesaplaması
+                # Satış İşlemi (Kasaya Para Girişi)
                 satis_tutari = lot * exit_price
                 komisyon_satis = satis_tutari * komisyon_orani
                 net_ele_gecen = satis_tutari - komisyon_satis
@@ -111,7 +111,7 @@ if run:
                 net_kar_tl = net_ele_gecen - maliyet
                 getiri_pct = (net_kar_tl / maliyet) * 100
                 
-                current_sermaye += net_kar_tl
+                kasa_nakit += net_ele_gecen # Kasaya satıştan kalan net parayı ekle
                 
                 results.append({
                     "Giriş Tarihi": df.index[entry_idx].strftime("%Y-%m-%d"),
@@ -123,26 +123,29 @@ if run:
                     "Getiri (%)": round(getiri_pct, 2),
                     "Çıkış Nedeni": exit_reason,
                     "Gün": days_held,
-                    "Kalan Sermaye": round(current_sermaye, 2)
+                    "Portföy Değeri": round(kasa_nakit, 2) # İşlem kapandığı için portföy = nakit
                 })
                 in_position = False
                 continue
                 
         # 2. YENİ POZİSYON AÇMA
         if not in_position and df["Signal"].iloc[i]:
-            in_position = True
-            entry_idx = i
             entry_price = df["Close"].iloc[i]
-            stop_price = entry_price * (1 - stop_loss_pct / 100)
-            target_price = entry_price * (1 + take_profit_pct / 100)
             
-            # Alış İşlemi ve Lot Hesabı
-            islem_tutari = current_sermaye
-            komisyon_alis = islem_tutari * komisyon_orani
-            efektif_tutar = islem_tutari - komisyon_alis
-            lot = int(efektif_tutar / entry_price) # Tam sayı lot (BIST kuralı)
-            maliyet = (lot * entry_price) + (lot * entry_price * komisyon_orani)
-            current_sermaye -= maliyet # Parayı cebimizden çıkardık
+            # Lot Hesaplama (Bakiye yetiyor mu?)
+            # Kasayı sıfırlamamak için lot hesabında komisyonu da hesaba katıyoruz
+            alinabilecek_lot = int(kasa_nakit / (entry_price * (1 + komisyon_orani)))
+            
+            if alinabilecek_lot > 0: # Eğer en az 1 lot alacak para varsa işleme gir
+                in_position = True
+                entry_idx = i
+                lot = alinabilecek_lot
+                stop_price = entry_price * (1 - stop_loss_pct / 100)
+                target_price = entry_price * (1 + take_profit_pct / 100)
+                
+                # Alış İşlemi (Kasadan Para Çıkışı)
+                maliyet = lot * entry_price * (1 + komisyon_orani)
+                kasa_nakit -= maliyet
 
     res_df = pd.DataFrame(results)
     
@@ -150,17 +153,23 @@ if run:
         st.warning("Hiç işlem üretilmedi.")
         st.stop()
         
+    # Açık pozisyon varsa test sonundaki portföy değerini hesapla
+    nihai_portfoy = kasa_nakit
+    if in_position:
+        nihai_portfoy += (lot * df["Close"].iloc[-1]) # Hisse değerini ekle
+        
     st.session_state["bt_res_df"] = res_df
     st.session_state["bt_ticker"] = ticker
     st.session_state["bt_baslangic"] = baslangic_sermayesi
+    st.session_state["bt_nihai"] = nihai_portfoy
     st.session_state["bt_ind_name"] = gosterge_secimi
-    st.session_state["bt_signal_active"] = df["Signal"].iloc[-1] or in_position
+    st.session_state["bt_in_position"] = in_position
     st.session_state["bt_active_details"] = {
         "entry": entry_price if in_position else df["Close"].iloc[-1],
         "stop": stop_price if in_position else df["Close"].iloc[-1] * (1 - stop_loss_pct / 100),
         "target": target_price if in_position else df["Close"].iloc[-1] * (1 + take_profit_pct / 100),
-        "lot": lot if in_position else int(current_sermaye / df["Close"].iloc[-1]),
-        "sermaye": current_sermaye
+        "lot": lot if in_position else int(kasa_nakit / df["Close"].iloc[-1]),
+        "kasa": kasa_nakit
     }
 
 # --- EKRANA ÇİZİM KISMI ---
@@ -168,10 +177,11 @@ if "bt_res_df" in st.session_state:
     res_df = st.session_state["bt_res_df"]
     ticker = st.session_state["bt_ticker"]
     baslangic = st.session_state["bt_baslangic"]
+    nihai_portfoy = st.session_state["bt_nihai"]
     ind_name = st.session_state["bt_ind_name"]
+    in_position = st.session_state["bt_in_position"]
     
-    son_sermaye = res_df["Kalan Sermaye"].iloc[-1]
-    toplam_kar = son_sermaye - baslangic
+    toplam_kar = nihai_portfoy - baslangic
     toplam_getiri = (toplam_kar / baslangic) * 100
     win_rate = (res_df["Net Kâr/Zarar (TL)"] > 0).mean() * 100
     
@@ -179,28 +189,31 @@ if "bt_res_df" in st.session_state:
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Başlangıç Sermayesi", f"{baslangic:,.0f} TL")
-    c2.metric("Son Sermaye", f"{son_sermaye:,.0f} TL", f"%{toplam_getiri:.1f}")
+    c2.metric("Son Portföy Değeri", f"{nihai_portfoy:,.0f} TL", f"%{toplam_getiri:.1f}")
     c3.metric("Toplam Net Kâr", f"{toplam_kar:,.0f} TL")
-    c4.metric("Başarı Oranı", f"%{win_rate:.1f}", f"{len(res_df)} İşlem")
+    c4.metric("Başarı Oranı", f"%{win_rate:.1f}", f"{len(res_df)} Kapanan İşlem")
 
     # --- SİNYAL DURUMU KARTI ---
     act = st.session_state["bt_active_details"]
-    st.markdown("### 🎯 Son Durum ve Aksiyon Planı")
-    st.info(f"**Sistem Şu Anki Fiyat:** {act['entry']:.2f} TL | **Kalan Nakit:** {act['sermaye']:,.0f} TL")
+    durum_text = "AÇIK POZİSYON VAR (Hisse Sende)" if in_position else "BEKLEMEDE (Nakit Var)"
+    st.markdown(f"### 🎯 Son Durum ve Aksiyon Planı — **{durum_text}**")
+    st.info(f"**Güncel Fiyat:** {act['entry']:.2f} TL | **Kasadaki Nakit:** {act['kasa']:,.0f} TL")
     
     colA, colB, colC = st.columns(3)
     colA.error(f"🛑 **Stop-Loss (Nereden Çıkılır?)**\n\nFiyat: {act['stop']:.2f} TL\n\nZarar: -%{((act['stop']/act['entry'])-1)*-100:.1f}")
     colB.success(f"🎯 **Kâr Al (Hedef)**\n\nFiyat: {act['target']:.2f} TL\n\nKâr: +%{((act['target']/act['entry'])-1)*100:.1f}")
-    colC.info(f"📦 **Lot & Potansiyel**\n\nAlınacak Lot: {act['lot']}\n\nBeklenen Kâr: {act['lot'] * (act['target']-act['entry']):,.0f} TL")
+    
+    potansiyel_kar = act['lot'] * (act['target'] - act['entry'])
+    colC.info(f"📦 **Lot & Potansiyel**\n\nMevcut/Alınacak Lot: {act['lot']}\n\nHedefteki Kâr: {potansiyel_kar:,.0f} TL")
 
     # --- SERMAYE EĞRİSİ (EQUITY CURVE) ---
     st.markdown("### 📈 Sermaye Büyüme Grafiği")
-    eq_df = res_df[["Çıkış Tarihi", "Kalan Sermaye"]].copy()
+    eq_df = res_df[["Çıkış Tarihi", "Portföy Değeri"]].copy()
     eq_df.loc[-1] = ["Başlangıç", baslangic]
     eq_df.index = eq_df.index + 1
     eq_df = eq_df.sort_index()
     
-    fig_eq = px.line(eq_df, x="Çıkış Tarihi", y="Kalan Sermaye", markers=True, 
+    fig_eq = px.line(eq_df, x="Çıkış Tarihi", y="Portföy Değeri", markers=True, 
                      title="Paranızın Zaman İçindeki Değişimi (Bileşik Getiri)")
     fig_eq.update_traces(line_color="#2e7d32", line_width=3)
     st.plotly_chart(fig_eq, use_container_width=True)
