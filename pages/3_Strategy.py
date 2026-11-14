@@ -83,7 +83,7 @@ if run:
             stop_price = entry_price * (1 - stop_loss_pct / 100)
             target_price = entry_price * (1 + take_profit_pct / 100)
             
-            exit_price = df["Close"].iloc[idx + hold_days] # Varsayılan çıkış
+            exit_price = df["Close"].iloc[idx + hold_days]
             exit_reason = "Süre Doldu"
             days_held = hold_days
             
@@ -92,7 +92,6 @@ if run:
                 low_price = df["Low"].iloc[idx + i]
                 high_price = df["High"].iloc[idx + i]
                 
-                # Aynı gün içinde hem stop hem target vurulursa (kötü senaryo), stop kabul et
                 if low_price <= stop_price:
                     exit_price = stop_price
                     exit_reason = "Stop-Loss"
@@ -142,9 +141,9 @@ if "bt_res_df" in st.session_state:
     c2.metric("Başarı Oranı (Win Rate)", f"%{win_rate:.1f}")
     c3.metric("Ort. Getiri", f"%{avg_return:.2f}")
     
-        st.markdown("#### Detaylı İşlem Geçmişi")
+    st.markdown("#### Detaylı İşlem Geçmişi")
     
-    # Hata veren renklendirme kaldırıldı, doğrudan tablo basılıyor
+    # Renklendirme tamamen kaldırıldı, hata vermez.
     st.dataframe(
         res_df, 
         use_container_width=True, 
