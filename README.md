@@ -12,6 +12,15 @@ Streamlit tabanlı, BIST hisseleri için otomatik **destek/direnç** ve **alım-
 - Risk yüzdesine göre otomatik lot hesabı
 - CSV dışa aktarma
 
+## 📊 Backtest
+
+Streamlit'te **Pages → 📊 Backtest** üzerinden geçmiş seviyelerin tutma oranını görebilirsiniz.
+
+CLI:
+```bash
+python -c "from data import fetch_ohlcv, normalize_ticker; from backtest import run_backtest, summarize; \
+df=fetch_ohlcv(normalize_ticker('PATEK')); r=run_backtest(df); print(summarize(r)['Tür'])"
+
 - 
 ## Kurulum
 ```bash
