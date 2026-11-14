@@ -48,9 +48,9 @@ if tara:
         if df.empty or len(df) < 50:
             continue
             
-        # Göstergeleri hesapla
+        # Göstergeleri hesapla (HATA BURADAYDI, DÜZELTİLDİ)
         df["RSI"] = rsi(df, 14)
-        df["Stoch_RSI"] = stochastic_rsi(df, 14)
+        df["Stoch_RSI"] = stochastic_rsi(df["Close"], 14)
         df["KAMA"] = kama(df["Close"], 10)
         df["Wilders"] = wilders_smoothing(df["Close"], 14)
         
