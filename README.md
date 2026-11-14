@@ -1,5 +1,5 @@
 # 📈 BIST Destek/Direnç & İşlem Planı
-
+# YATIRIM TAVSİYESİ DEĞİLDİR #
 Streamlit tabanlı, BIST hisseleri için otomatik **destek/direnç** ve **alım-satım planı** üreten uygulama.
 
 ## Özellikler
