@@ -63,3 +63,102 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
 def ema(series: pd.Series, length: int = 50):
     """Üstel Hareketli Ortalama (EMA)."""
     return series.ewm(span=length, adjust=False).mean()
+
+def bollinger_bands(series: pd.Series, window: int = 20, num_std: float = 2.0):
+    """Bollinger Bantlarını (Üst, Orta, Alt) döndürür."""
+    sma = series.rolling(window=window).mean()
+    std = series.rolling(window=window).std()
+    upper_band = sma + (std * num_std)
+    lower_band = sma - (std * num_std)
+    return upper_band, sma, lower_band
+
+def calculate_adx(df: pd.DataFrame, period: int = 14):
+    """ADX, +DI ve -DI değerlerini hesaplar."""
+    df = df.copy()
+    df['h_l'] = df['High'] - df['Low']
+    df['h_pc'] = (df['High'] - df['Close'].shift(1)).abs()
+    df['l_pc'] = (df['Low'] - df['Close'].shift(1)).abs()
+    df['tr'] = df[['h_l', 'h_pc', 'l_pc']].max(axis=1)
+
+    df['up_move'] = df['High'] - df['High'].shift(1)
+    df['down_move'] = df['Low'].shift(1) - df['Low']
+    df['+dm'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
+    df['-dm'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
+
+    alpha = 1 / period
+    df['tr_smooth'] = df['tr'].ewm(alpha=alpha, adjust=False).mean()
+    df['+di'] = 100 * (df['+dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+    df['-di'] = 100 * (df['-dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+    df['dx'] = (abs(df['+di'] - df['-di']) / (df['+di'] + df['-di'])) * 100
+    df['adx'] = df['dx'].ewm(alpha=alpha, adjust=False).mean()
+    return df['adx'], df['+di'], df['-di']
+
+def calculate_adx(df: pd.DataFrame, period: int = 14):
+    """ADX, +DI ve -DI değerlerini hesaplar."""
+    df = df.copy()
+    df['h_l'] = df['High'] - df['Low']
+    df['h_pc'] = (df['High'] - df['Close'].shift(1)).abs()
+    df['l_pc'] = (df['Low'] - df['Close'].shift(1)).abs()
+    df['tr'] = df[['h_l', 'h_pc', 'l_pc']].max(axis=1)
+
+    df['up_move'] = df['High'] - df['High'].shift(1)
+    df['down_move'] = df['Low'].shift(1) - df['Low']
+    df['+dm'] = np.where((df['up_move'] > df['down_move']) & (df['up_move'] > 0), df['up_move'], 0)
+    df['-dm'] = np.where((df['down_move'] > df['up_move']) & (df['down_move'] > 0), df['down_move'], 0)
+
+    alpha = 1 / period
+    df['tr_smooth'] = df['tr'].ewm(alpha=alpha, adjust=False).mean()
+    df['+di'] = 100 * (df['+dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+    df['-di'] = 100 * (df['-dm'].ewm(alpha=alpha, adjust=False).mean() / df['tr_smooth'])
+    df['dx'] = (abs(df['+di'] - df['-di']) / (df['+di'] + df['-di'])) * 100
+    df['adx'] = df['dx'].ewm(alpha=alpha, adjust=False).mean()
+    return df['adx'], df['+di'], df['-di']
+
+def calculate_vwap(df: pd.DataFrame):
+    """Kümülatif VWAP hesaplar."""
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    vwap = (typical_price * df['Volume']).cumsum() / df['Volume'].cumsum()
+    return vwap
+
+def calculate_obv(df: pd.DataFrame):
+    """On-Balance Volume (OBV) hesaplar."""
+    obv = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    return obv
+
+def calculate_supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0):
+    """Supertrend yönünü (1: Al, -1: Sat) ve çizgi değerini döndürür."""
+    hl2 = (df['High'] + df['Low']) / 2
+    # ATR hesaplaması (Wilder's Smoothing)
+    df['tr'] = pd.concat([
+        df['High'] - df['Low'],
+        (df['High'] - df['Close'].shift()).abs(),
+        (df['Low'] - df['Close'].shift()).abs()
+    ], axis=1).max(axis=1)
+    df['atr'] = df['tr'].ewm(alpha=1/period, adjust=False).mean()
+
+    upper_band = hl2 + (multiplier * df['atr'])
+    lower_band = hl2 - (multiplier * df['atr'])
+
+    supertrend = pd.Series(index=df.index, dtype=float)
+    direction = pd.Series(index=df.index, dtype=int)
+
+    supertrend.iloc[0] = upper_band.iloc[0]
+    direction.iloc[0] = -1
+
+    for i in range(1, len(df)):
+        if df['Close'].iloc[i] > upper_band.iloc[i-1]:
+            direction.iloc[i] = 1
+        elif df['Close'].iloc[i] < lower_band.iloc[i-1]:
+            direction.iloc[i] = -1
+        else:
+            direction.iloc[i] = direction.iloc[i-1]
+            if direction.iloc[i] == 1 and lower_band.iloc[i] < lower_band.iloc[i-1]:
+                lower_band.iloc[i] = lower_band.iloc[i-1]
+            if direction.iloc[i] == -1 and upper_band.iloc[i] > upper_band.iloc[i-1]:
+                upper_band.iloc[i] = upper_band.iloc[i-1]
+
+        supertrend.iloc[i] = lower_band.iloc[i] if direction.iloc[i] == 1 else upper_band.iloc[i]
+
+    return supertrend, direction
+
+
