@@ -1,16 +1,18 @@
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from data import fetch_ohlcv, normalize_ticker
-from indicators import kama, stochastic_rsi, wilders_smoothing, macd, ema
+from indicators import (
+    kama, stochastic_rsi, wilders_smoothing, macd, ema, 
+    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend
+)
 from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Sermaye, Lot, Komisyon ve Gelişmiş İndikatörler")
+st.caption("Tüm Profesyonel İndikatörler ve Sermaye Simülasyonu")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
@@ -26,18 +28,23 @@ with st.sidebar:
     
     st.markdown("**Filtreler (Teyitler)**")
     use_kama = st.checkbox("Fiyat > KAMA (10)", value=True)
-    use_wilders = st.checkbox("Fiyat > Wilders (14)", value=True)
-    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=False)
+    use_wilders = st.checkbox("Fiyat > Wilders (14)", value=False)
+    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
     
-    # YENİ EKLENEN İNDİKATÖRLER
     use_macd = st.checkbox("MACD > Sinyal Çizgisi", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
     use_volume = st.checkbox("Hacim > Ortalama Hacim (20g)", value=False)
     
+    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
+    use_adx = st.checkbox("ADX > 25 (Güçlü Trend)", value=False)
+    use_vwap = st.checkbox("Fiyat > VWAP", value=False)
+    use_obv = st.checkbox("OBV > 20 Günlük Ortalaması", value=False)
+    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
+    
     st.markdown("---")
     st.markdown("**💰 Sermaye ve Risk**")
-    baslangic_sermayesi = st.number_input("Başlangıç Sermayesi (TL)", value=100000, step=10000)
-    komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.1, step=0.1)
+    baslangic_sermayesi = st.number_input("Başlangıç Sermayesi (TL)", value=18000, step=1000)
+    komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.0, step=0.1)
     
     st.markdown("**Çıkış Stratejisi**")
     hold_days = st.number_input("Maksimum Gün", value=15)
@@ -55,7 +62,7 @@ if run:
         st.error("Yetersiz veri.")
         st.stop()
         
-    # Göstergeleri Hesapla
+    # Tüm İndikatörleri Hesapla
     df["RSI"] = rsi(df, ind_length)
     df["KAMA"] = kama(df["Close"], 10)
     df["Wilders"] = wilders_smoothing(df["Close"], 14)
@@ -63,6 +70,12 @@ if run:
     df["EMA50"] = ema(df["Close"], 50)
     df["MACD"], df["MACD_Signal"] = macd(df["Close"])
     df["Vol_SMA"] = df["Volume"].rolling(20).mean()
+    
+    df["BB_Upper"], df["BB_Mid"], df["BB_Lower"] = bollinger_bands(df["Close"])
+    df["ADX"], df["+DI"], df["-DI"] = calculate_adx(df)
+    df["VWAP"] = calculate_vwap(df)
+    df["OBV"] = calculate_obv(df)
+    df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
     
     # Sinyal Mantığı
     current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
@@ -72,13 +85,28 @@ if run:
     kama_cond = (df["Close"] > df["KAMA"]) if use_kama else pd.Series(True, index=df.index)
     wilders_cond = (df["Close"] > df["Wilders"]) if use_wilders else pd.Series(True, index=df.index)
     stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
-    
-    # Yeni Filtre Şartları
-    macd_cond = (df["MACD"] > df["MACD_Signal"]) if use_macd else pd.Series(True, index=df.index)
     ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
     volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
     
-    df["Signal"] = base_signal & kama_cond & wilders_cond & stoch_rsi_cond & macd_cond & ema50_cond & volume_cond
+    if use_macd:
+        macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
+        macd_recent_cross = macd_cross.rolling(window=3).max().fillna(0).astype(bool)
+        macd_cond = (df["MACD"] > df["MACD_Signal"]) | macd_recent_cross
+    else:
+        macd_cond = pd.Series(True, index=df.index)
+
+    bollinger_cond = (df["Close"] > df["BB_Mid"]) if use_bollinger else pd.Series(True, index=df.index)
+    adx_cond = (df["ADX"] > 25) if use_adx else pd.Series(True, index=df.index)
+    vwap_cond = (df["Close"] > df["VWAP"]) if use_vwap else pd.Series(True, index=df.index)
+    obv_cond = (df["OBV"] > df["OBV"].rolling(20).mean()) if use_obv else pd.Series(True, index=df.index)
+    supertrend_cond = (df["ST_Direction"] == 1) if use_supertrend else pd.Series(True, index=df.index)
+    
+    # Nihai Sinyal
+    df["Signal"] = (
+        base_signal & kama_cond & wilders_cond & stoch_rsi_cond & 
+        macd_cond & ema50_cond & volume_cond & 
+        bollinger_cond & adx_cond & vwap_cond & obv_cond & supertrend_cond
+    )
     
     results = []
     in_position = False
@@ -123,7 +151,6 @@ if run:
                 satis_tutari = lot * exit_price
                 komisyon_satis = satis_tutari * komisyon_orani
                 net_ele_gecen = satis_tutari - komisyon_satis
-                
                 net_kar_tl = net_ele_gecen - maliyet
                 getiri_pct = (net_kar_tl / maliyet) * 100
                 kasa_nakit += net_ele_gecen
