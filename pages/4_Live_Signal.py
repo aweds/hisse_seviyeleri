@@ -2,7 +2,10 @@ import pandas as pd
 import streamlit as st
 
 from data import fetch_ohlcv, normalize_ticker
-from indicators import kama, stochastic_rsi, wilders_smoothing, macd, ema
+from indicators import (
+    kama, stochastic_rsi, wilders_smoothing, macd, ema, 
+    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend
+)
 from levels import rsi
 
 st.set_page_config(page_title="Canlı Sinyal", page_icon="🚨", layout="wide")
@@ -19,12 +22,18 @@ with st.sidebar:
     
     st.markdown("**Filtreler**")
     use_kama = st.checkbox("Fiyat > KAMA", value=True)
-    use_wilders = st.checkbox("Fiyat > Wilders", value=True)
-    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=False)
+    use_wilders = st.checkbox("Fiyat > Wilders", value=False)
+    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
     
     use_macd = st.checkbox("MACD > Sinyal", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
     use_volume = st.checkbox("Hacim > Ort. Hacim", value=False)
+    
+    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
+    use_adx = st.checkbox("ADX > 25", value=False)
+    use_vwap = st.checkbox("Fiyat > VWAP", value=False)
+    use_obv = st.checkbox("OBV > 20 Günlük Ort.", value=False)
+    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
     
     st.markdown("---")
     st.markdown("**Risk Yönetimi**")
@@ -116,6 +125,7 @@ if tara:
         
         if df.empty or len(df) < 50: continue
             
+        # İndikatörleri Hesapla
         df["RSI"] = rsi(df, 14)
         df["Stoch_RSI"] = stochastic_rsi(df["Close"], 14)
         df["KAMA"] = kama(df["Close"], 10)
@@ -124,6 +134,12 @@ if tara:
         df["MACD"], df["MACD_Signal"] = macd(df["Close"])
         df["Vol_SMA"] = df["Volume"].rolling(20).mean()
         
+        df["BB_Upper"], df["BB_Mid"], df["BB_Lower"] = bollinger_bands(df["Close"])
+        df["ADX"], df["+DI"], df["-DI"] = calculate_adx(df)
+        df["VWAP"] = calculate_vwap(df)
+        df["OBV"] = calculate_obv(df)
+        df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
+        
         son_bar = df.iloc[-1]
         onceki_bar = df.iloc[-2]
         
@@ -131,16 +147,30 @@ if tara:
         prev_ind = onceki_bar["Stoch_RSI"] if gosterge_secimi == "Stoch RSI" else onceki_bar["RSI"]
         
         ind_sinyali = (prev_ind < esik) and (current_ind >= esik)
+        
         kama_cond = (son_bar["Close"] > son_bar["KAMA"]) if use_kama else True
         wilders_cond = (son_bar["Close"] > son_bar["Wilders"]) if use_wilders else True
         stoch_rsi_cond = (son_bar["Stoch_RSI"] < son_bar["RSI"]) if use_stoch_below_rsi else True
-        
-        macd_cond = (son_bar["MACD"] > son_bar["MACD_Signal"]) if use_macd else True
         ema50_cond = (son_bar["Close"] > son_bar["EMA50"]) if use_ema50 else True
         volume_cond = (son_bar["Volume"] > son_bar["Vol_SMA"]) if use_volume else True
         
+        if use_macd:
+            macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
+            macd_recent_cross = macd_cross.rolling(window=3).max().fillna(0).astype(bool)
+            macd_cond = (son_bar["MACD"] > son_bar["MACD_Signal"]) or macd_recent_cross.iloc[-1]
+        else:
+            macd_cond = True
+
+        bollinger_cond = (son_bar["Close"] > son_bar["BB_Mid"]) if use_bollinger else True
+        adx_cond = (son_bar["ADX"] > 25) if use_adx else True
+        vwap_cond = (son_bar["Close"] > son_bar["VWAP"]) if use_vwap else True
+        obv_cond = (son_bar["OBV"] > df["OBV"].rolling(20).mean().iloc[-1]) if use_obv else True
+        supertrend_cond = (son_bar["ST_Direction"] == 1) if use_supertrend else True
+        
         durum = "BEKLE"
-        if ind_sinyali and kama_cond and wilders_cond and stoch_rsi_cond and macd_cond and ema50_cond and volume_cond:
+        if (ind_sinyali and kama_cond and wilders_cond and stoch_rsi_cond and macd_cond 
+            and ema50_cond and volume_cond and bollinger_cond and adx_cond and vwap_cond 
+            and obv_cond and supertrend_cond):
             durum = "AL"
         elif current_ind < esik:
             durum = "İZLE"
