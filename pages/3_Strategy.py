@@ -5,12 +5,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from data import fetch_ohlcv, normalize_ticker
-from indicators import kama, stochastic_rsi, wilders_smoothing
+from indicators import kama, stochastic_rsi, wilders_smoothing, macd, ema
 from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Sermaye, Lot, Komisyon ve Kâr/Zarar Simülasyonu")
+st.caption("Sermaye, Lot, Komisyon ve Gelişmiş İndikatörler")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
@@ -19,19 +19,20 @@ with st.sidebar:
     period = st.selectbox("Test Periyodu", ["1y", "2y", "5y"], index=1)
     
     st.markdown("---")
-    gosterge_secimi = st.radio("Kullanılacak Gösterge", ["RSI", "Stoch RSI"])
+    gosterge_secimi = st.radio("Ana Gösterge", ["RSI", "Stoch RSI"])
     varsayilan_esik = 30
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
     ind_length = st.number_input("Gösterge Periyodu", value=14)
     
-    st.markdown("**Filtreler**")
-    use_kama = st.checkbox("Fiyat KAMA'nın üzerinde olsun", value=True)
-    kama_length = st.number_input("KAMA Periyodu", value=10, disabled=not use_kama)
-    use_wilders = st.checkbox("Fiyat Wilders'ın üzerinde olsun", value=True)
-    wilders_length = st.number_input("Wilders Periyodu", value=14, disabled=not use_wilders)
+    st.markdown("**Filtreler (Teyitler)**")
+    use_kama = st.checkbox("Fiyat > KAMA (10)", value=True)
+    use_wilders = st.checkbox("Fiyat > Wilders (14)", value=True)
+    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=False)
     
-    # YENİ EKLENEN FİLTRE
-    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI şartı", value=False, help="Yükselişin daha yeni başladığını teyit etmek için.")
+    # YENİ EKLENEN İNDİKATÖRLER
+    use_macd = st.checkbox("MACD > Sinyal Çizgisi", value=False)
+    use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
+    use_volume = st.checkbox("Hacim > Ortalama Hacim (20g)", value=False)
     
     st.markdown("---")
     st.markdown("**💰 Sermaye ve Risk**")
@@ -54,21 +55,30 @@ if run:
         st.error("Yetersiz veri.")
         st.stop()
         
+    # Göstergeleri Hesapla
     df["RSI"] = rsi(df, ind_length)
-    df["KAMA"] = kama(df["Close"], kama_length)
-    df["Wilders"] = wilders_smoothing(df["Close"], wilders_length)
+    df["KAMA"] = kama(df["Close"], 10)
+    df["Wilders"] = wilders_smoothing(df["Close"], 14)
     df["Stoch_RSI"] = stochastic_rsi(df["Close"], ind_length)
+    df["EMA50"] = ema(df["Close"], 50)
+    df["MACD"], df["MACD_Signal"] = macd(df["Close"])
+    df["Vol_SMA"] = df["Volume"].rolling(20).mean()
     
+    # Sinyal Mantığı
     current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
     base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
     
-    kama_condition = df["Close"] > df["KAMA"] if use_kama else pd.Series(True, index=df.index)
-    wilders_condition = df["Close"] > df["Wilders"] if use_wilders else pd.Series(True, index=df.index)
+    # Filtre Şartları
+    kama_cond = (df["Close"] > df["KAMA"]) if use_kama else pd.Series(True, index=df.index)
+    wilders_cond = (df["Close"] > df["Wilders"]) if use_wilders else pd.Series(True, index=df.index)
+    stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
     
-    # YENİ FİLTRE MANTIĞI
-    stoch_vs_rsi_condition = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
+    # Yeni Filtre Şartları
+    macd_cond = (df["MACD"] > df["MACD_Signal"]) if use_macd else pd.Series(True, index=df.index)
+    ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
+    volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
     
-    df["Signal"] = base_signal & kama_condition & wilders_condition & stoch_vs_rsi_condition
+    df["Signal"] = base_signal & kama_cond & wilders_cond & stoch_rsi_cond & macd_cond & ema50_cond & volume_cond
     
     results = []
     in_position = False
@@ -149,7 +159,7 @@ if run:
     res_df = pd.DataFrame(results)
     
     if res_df.empty:
-        st.warning("Hiç işlem üretilmedi.")
+        st.warning("Hiç işlem üretilmedi. Filtreleri gevşetmeyi deneyin.")
         st.stop()
         
     nihai_portfoy = kasa_nakit
@@ -189,10 +199,10 @@ if "bt_res_df" in st.session_state:
     c1.metric("Başlangıç Sermayesi", f"{baslangic:,.0f} TL")
     c2.metric("Son Portföy Değeri", f"{nihai_portfoy:,.0f} TL", f"%{toplam_getiri:.1f}")
     c3.metric("Toplam Net Kâr", f"{toplam_kar:,.0f} TL")
-    c4.metric("Başarı Oranı", f"%{win_rate:.1f}", f"{len(res_df)} Kapanan İşlem")
+    c4.metric("Başarı Oranı", f"%{win_rate:.1f}", f"{len(res_df)} İşlem")
 
     act = st.session_state["bt_active_details"]
-    durum_text = "AÇIK POZİSYON VAR (Hisse Sende)" if in_position else "BEKLEMEDE (Nakit Var)"
+    durum_text = "AÇIK POZİSYON VAR" if in_position else "BEKLEMEDE"
     st.markdown(f"### 🎯 Son Durum ve Aksiyon Planı — **{durum_text}**")
     st.info(f"**Güncel Fiyat:** {act['entry']:.2f} TL | **Kasadaki Nakit:** {act['kasa']:,.0f} TL")
     
@@ -211,5 +221,5 @@ if "bt_res_df" in st.session_state:
     fig_eq.update_traces(line_color="#2e7d32", line_width=3)
     st.plotly_chart(fig_eq, use_container_width=True)
 
-    st.markdown("#### Detaylı İşlem Defteri (TL ve Lot Bazında)")
+    st.markdown("#### Detaylı İşlem Defteri")
     st.dataframe(res_df, use_container_width=True, hide_index=True)
