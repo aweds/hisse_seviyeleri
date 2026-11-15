@@ -51,3 +51,15 @@ def kama(series: pd.Series, length: int = 10, fast: int = 2, slow: int = 30) -> 
 def wilders_smoothing(series: pd.Series, length: int = 14) -> pd.Series:
     """Wilder's Smoothing (RMA - Wilder Hareketli Ortalaması)."""
     return series.ewm(alpha=1.0 / length, adjust=False).mean()
+
+def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    """MACD Çizgisi ve Sinyal Çizgisini döner."""
+    exp1 = series.ewm(span=fast, adjust=False).mean()
+    exp2 = series.ewm(span=slow, adjust=False).mean()
+    macd_line = exp1 - exp2
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line
+
+def ema(series: pd.Series, length: int = 50):
+    """Üstel Hareketli Ortalama (EMA)."""
+    return series.ewm(span=length, adjust=False).mean()
