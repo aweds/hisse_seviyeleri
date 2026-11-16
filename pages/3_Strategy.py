@@ -13,23 +13,19 @@ from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Tüm Profesyonel İndikatörler ve Zaman Dilimi Seçenekleri")
+st.caption("Tüm Profesyonel İndikatörler, Zaman Dilimi ve Trailing Stop Seçenekleri")
 
-# --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
     st.header("⚙️ Strateji Ayarları")
     raw = st.text_input("Hisse", "ARDYZ")
     
-    # ZAMAN DİLİMİ SEÇİMİ
-    zaman_dilimi = st.selectbox("Zaman Dilimi (Periyot)", ["Günlük (1d)", "Saatlik (1h)", "15 Dakika (15m)"], index=0)
-    
-    # Veri periyodunu zaman dilimine göre otomatik ayarla
+    zaman_dilimi = st.selectbox("Zaman Dilimi", ["Günlük (1d)", "Saatlik (1h)", "15 Dakika (15m)"], index=0)
     if zaman_dilimi == "Günlük (1d)":
         interval, period = "1d", "2y"
     elif zaman_dilimi == "Saatlik (1h)":
         interval, period = "1h", "1y"
     else:
-        interval, period = "15m", "60d" # Yahoo Finance 15m için max 60 gün verir
+        interval, period = "15m", "60d"
 
     st.markdown("---")
     gosterge_secimi = st.radio("Ana Gösterge", ["RSI", "Stoch RSI"])
@@ -39,25 +35,18 @@ with st.sidebar:
     
     st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA (10)", value=True)
-    use_wilders = st.checkbox("Fiyat > Wilders (14)", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
+    use_wilders = st.checkbox("Fiyat > Wilders (14)", value=False)
     use_alma = st.checkbox("Fiyat > ALMA (10)", value=False)
     use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
-    use_coppock = st.checkbox("Coppock Curve > 0", value=False)
     
     st.markdown("**Momentum Filtreleri**")
     use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
     use_macd = st.checkbox("MACD > Sinyal Çizgisi", value=False)
-    use_fisher = st.checkbox("Fisher > Sinyal Çizgisi", value=False)
-    use_crsi = st.checkbox("Connors RSI < 20", value=False)
     
     st.markdown("**Hacim & Volatilite Filtreleri**")
     use_volume = st.checkbox("Hacim > Ortalama Hacim (20 Bar)", value=False)
-    use_vwap = st.checkbox("Fiyat > VWAP", value=False)
     use_obv = st.checkbox("OBV > 20 Barlık Ortalaması", value=False)
-    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
-    use_adx = st.checkbox("ADX > 25 (Güçlü Trend)", value=False)
-    use_mass = st.checkbox("Mass Index < 27 (Sıkışma)", value=False)
     
     st.markdown("---")
     st.markdown("**💰 Sermaye ve Risk**")
@@ -65,23 +54,24 @@ with st.sidebar:
     komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.0, step=0.1)
     
     st.markdown("**Çıkış Stratejisi**")
-    hold_days = st.number_input("Maksimum Bar (Gün/Saat/Dk)", value=15, help="Seçilen zaman dilimine göre kaç bar sonra çıkılacağını belirler.")
-    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0)
+    hold_days = st.number_input("Maksimum Bar (Gün/Saat/Dk)", value=15)
+    
+    # TRAILING STOP SEÇENEĞİ
+    use_trailing = st.checkbox("🪜 İz Süren Zarar Durdur (Trailing Stop)", value=False, help="Fiyat yükseldikçe Stop-Loss seviyesini yukarı taşır ve kârı kilitler.")
+    stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0, help="Trailing seçiliyse, bu oran fiyattan geriye doğru takip mesafesidir.")
     take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=25.0, step=1.0)
     
     run = st.button("▶️ Stratejiyi Test Et", type="primary", use_container_width=True)
 
 ticker = normalize_ticker(raw)
 
-# --- HESAPLAMA KISMI ---
 if run:
     df = fetch_ohlcv(ticker, interval=interval, period=period)
     
     if df.empty or len(df) < 100:
-        st.error(f"Yetersiz veri. {zaman_dilimi} için en az 100 bar gerekiyor. Lütfen daha uzun bir periyot seçin.")
+        st.error(f"Yetersiz veri.")
         st.stop()
         
-    # Tüm İndikatörleri Hesapla
     df["RSI"] = rsi(df, ind_length)
     df["KAMA"] = kama(df["Close"], 10)
     df["Wilders"] = wilders_smoothing(df["Close"], 14)
@@ -89,33 +79,21 @@ if run:
     df["EMA50"] = ema(df["Close"], 50)
     df["MACD"], df["MACD_Signal"] = macd(df["Close"])
     df["Vol_SMA"] = df["Volume"].rolling(20).mean()
-    
-    df["BB_Upper"], df["BB_Mid"], df["BB_Lower"] = bollinger_bands(df["Close"])
-    df["ADX"], df["+DI"], df["-DI"] = calculate_adx(df)
-    df["VWAP"] = calculate_vwap(df)
-    df["OBV"] = calculate_obv(df)
-    df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
-    
-    # Yeni İndikatörler
     df["ALMA"] = alma(df["Close"], 10)
-    df["Fisher"], df["Fisher_Signal"] = fisher_transform(df)
-    df["CRSI"] = connors_rsi(df["Close"])
-    df["Coppock"] = coppock_curve(df["Close"])
-    df["Mass_Index"] = mass_index(df)
+    df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
+    df["OBV"] = calculate_obv(df)
     
-    # Sinyal Mantığı
     current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
     base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
     
-    # Filtre Şartları
     kama_cond = (df["Close"] > df["KAMA"]) if use_kama else pd.Series(True, index=df.index)
     wilders_cond = (df["Close"] > df["Wilders"]) if use_wilders else pd.Series(True, index=df.index)
+    stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
     ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
+    volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
     alma_cond = (df["Close"] > df["ALMA"]) if use_alma else pd.Series(True, index=df.index)
     supertrend_cond = (df["ST_Direction"] == 1) if use_supertrend else pd.Series(True, index=df.index)
-    coppock_cond = (df["Coppock"] > 0) if use_coppock else pd.Series(True, index=df.index)
-    
-    stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
+    obv_cond = (df["OBV"] > df["OBV"].rolling(20).mean()) if use_obv else pd.Series(True, index=df.index)
     
     if use_macd:
         macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
@@ -123,23 +101,11 @@ if run:
         macd_cond = (df["MACD"] > df["MACD_Signal"]) | macd_recent_cross
     else:
         macd_cond = pd.Series(True, index=df.index)
-
-    fisher_cond = (df["Fisher"] > df["Fisher_Signal"]) if use_fisher else pd.Series(True, index=df.index)
-    crsi_cond = (df["CRSI"] < 20) if use_crsi else pd.Series(True, index=df.index)
     
-    volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
-    vwap_cond = (df["Close"] > df["VWAP"]) if use_vwap else pd.Series(True, index=df.index)
-    obv_cond = (df["OBV"] > df["OBV"].rolling(20).mean()) if use_obv else pd.Series(True, index=df.index)
-    bollinger_cond = (df["Close"] > df["BB_Mid"]) if use_bollinger else pd.Series(True, index=df.index)
-    adx_cond = (df["ADX"] > 25) if use_adx else pd.Series(True, index=df.index)
-    mass_cond = (df["Mass_Index"] < 27) if use_mass else pd.Series(True, index=df.index)
-    
-    # Nihai Sinyal
     df["Signal"] = (
         base_signal & kama_cond & wilders_cond & stoch_rsi_cond & 
         macd_cond & ema50_cond & volume_cond & 
-        bollinger_cond & adx_cond & vwap_cond & obv_cond & supertrend_cond &
-        alma_cond & fisher_cond & crsi_cond & coppock_cond & mass_cond
+        obv_cond & supertrend_cond & alma_cond
     )
     
     results = []
@@ -150,6 +116,7 @@ if run:
     target_price = 0
     lot = 0
     maliyet = 0
+    highest_price = 0 # En yüksek fiyatı takip etmek için
     
     kasa_nakit = baslangic_sermayesi
     komisyon_orani = komisyon_pct / 100.0
@@ -164,13 +131,25 @@ if run:
             close_price = df["Close"].iloc[i]
             open_price = df["Open"].iloc[i]
             
+            # En yüksek fiyatı güncelle
+            if high_price > highest_price:
+                highest_price = high_price
+                
+            # Trailing Stop seviyesini güncelle
+            current_stop = stop_price
+            if use_trailing:
+                # Yeni stop, en yüksek fiyattan %X aşağısı. Ancak ilk stop'un altına inemez.
+                trailing_stop = highest_price * (1 - stop_loss_pct / 100)
+                if trailing_stop > current_stop:
+                    current_stop = trailing_stop
+            
             exit_triggered = False
             exit_price = 0
             exit_reason = ""
             
-            if low_price <= stop_price:
-                exit_price = open_price if open_price <= stop_price else stop_price
-                exit_reason = "Stop-Loss"
+            if low_price <= current_stop:
+                exit_price = open_price if open_price <= current_stop else current_stop
+                exit_reason = "Trailing Stop" if (use_trailing and current_stop > stop_price) else "Stop-Loss"
                 exit_triggered = True
             elif high_price >= target_price:
                 exit_price = open_price if open_price >= target_price else target_price
@@ -214,6 +193,7 @@ if run:
                 lot = alinabilecek_lot
                 stop_price = entry_price * (1 - stop_loss_pct / 100)
                 target_price = entry_price * (1 + take_profit_pct / 100)
+                highest_price = entry_price # Yeni işlemde en yüksek fiyatı sıfırla
                 maliyet = lot * entry_price * (1 + komisyon_orani)
                 kasa_nakit -= maliyet
 
@@ -233,9 +213,15 @@ if run:
     st.session_state["bt_nihai"] = nihai_portfoy
     st.session_state["bt_ind_name"] = f"{gosterge_secimi} ({zaman_dilimi})"
     st.session_state["bt_in_position"] = in_position
+    
+    # Ekranda göstermek için mevcut durum bilgileri
+    current_stop_display = stop_price
+    if use_trailing and in_position:
+        current_stop_display = max(stop_price, highest_price * (1 - stop_loss_pct / 100))
+        
     st.session_state["bt_active_details"] = {
         "entry": entry_price if in_position else df["Close"].iloc[-1],
-        "stop": stop_price if in_position else df["Close"].iloc[-1] * (1 - stop_loss_pct / 100),
+        "stop": current_stop_display if in_position else df["Close"].iloc[-1] * (1 - stop_loss_pct / 100),
         "target": target_price if in_position else df["Close"].iloc[-1] * (1 + take_profit_pct / 100),
         "lot": lot if in_position else int(kasa_nakit / df["Close"].iloc[-1]),
         "kasa": kasa_nakit
@@ -268,7 +254,8 @@ if "bt_res_df" in st.session_state:
     st.info(f"**Güncel Fiyat:** {act['entry']:.2f} TL | **Kasadaki Nakit:** {act['kasa']:,.0f} TL")
     
     colA, colB, colC = st.columns(3)
-    colA.error(f"🛑 **Stop-Loss**\n\nFiyat: {act['stop']:.2f} TL\n\nZarar: -%{((act['stop']/act['entry'])-1)*-100:.1f}")
+    stop_label = "İz Süren Stop" if use_trailing else "Stop-Loss"
+    colA.error(f"🛑 **{stop_label}**\n\nFiyat: {act['stop']:.2f} TL\n\nZarar: -%{((act['stop']/act['entry'])-1)*-100:.1f}")
     colB.success(f"🎯 **Kâr Al**\n\nFiyat: {act['target']:.2f} TL\n\nKâr: +%{((act['target']/act['entry'])-1)*100:.1f}")
     colC.info(f"📦 **Lot & Potansiyel**\n\nMevcut/Alınacak Lot: {act['lot']}\n\nHedefteki Kâr: {act['lot'] * (act['target']-act['entry']):,.0f} TL")
 
