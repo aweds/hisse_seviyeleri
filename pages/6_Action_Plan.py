@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+from datetime import datetime
 
 from data import fetch_ohlcv, normalize_ticker
 from indicators import (
@@ -56,7 +57,7 @@ with st.sidebar:
     if has_position:
         entry_price = st.number_input("Alış Maliyetim (TL)", value=100.0)
         entry_lot = st.number_input("Lot Sayısı", value=100)
-        highest_price_since_entry = st.number_input("İşleme Girdiğimden Beri Gördüğü En Yüksek Fiyat", value=float(entry_price), help="Trailing stop hesaplaması için gereklidir. Kâr ettiyseniz buraya güncel yüksek fiyatı girin.")
+        entry_date = st.date_input("Alış Tarihi", value=datetime.today() - pd.Timedelta(days=10), help="Trailing stop'un en yüksek fiyatı bulabilmesi için alış tarihinizi girin.")
     
     st.markdown("---")
     st.markdown("**Risk Yönetimi**")
@@ -76,6 +77,7 @@ if df.empty or len(df) < 50:
     st.error("Yetersiz veri.")
     st.stop()
 
+# İndikatörler
 df["RSI"] = rsi(df, 14)
 df["Stoch_RSI"] = stochastic_rsi(df["Close"], 14)
 df["KAMA"] = kama(df["Close"], 10)
@@ -180,15 +182,30 @@ with col1:
         # --- SAT / TUT MANTIĞI ---
         base_stop = entry_price * (1 - stop_loss_pct / 100)
         
-        # Trailing Stop Hesaplaması
+        # OTOMATİK TRAILING STOP HESABI
         if use_trailing:
-            # Eğer girilen en yüksek fiyat maliyetin altındaysa maliyeti baz al
-            max_price = max(highest_price_since_entry, entry_price)
+            # Alış tarihinden itibaren geçen süredeki en yüksek fiyatı bul
+            try:
+                # Tarihi datetime formatına çevir ve df ile eşleştir
+                entry_datetime = pd.to_datetime(entry_date)
+                # Alış tarihinden itibaren olan veriyi filtrele
+                df_since_entry = df[df.index >= entry_datetime]
+                
+                if not df_since_entry.empty:
+                    max_price = df_since_entry["High"].max() # O tarihten beri görülen en yüksek fiyat
+                else:
+                    max_price = entry_price # Eğer tarih çok eskiyse veya veri yoksa maliyeti al
+            except Exception:
+                max_price = entry_price
+                
+            # Trailing stop seviyesi = En yüksek fiyattan %X aşağısı
             stop_fiyat = max_price * (1 - stop_loss_pct / 100)
+            
             # Trailing stop asla başlangıç stopunun altına inemez
             stop_fiyat = max(stop_fiyat, base_stop)
         else:
             stop_fiyat = base_stop
+            max_price = entry_price
             
         hedef_fiyat = entry_price * (1 + take_profit_pct / 100)
         anlik_kar_zarar = (fiyat - entry_price) * entry_lot
@@ -201,7 +218,7 @@ with col1:
             st.error(f"Zarar: {anlik_kar_zarar:,.2f} TL (%{anlik_yuzde:.2f})")
             
         if use_trailing:
-            st.info(f"🪜 **Güncel Trailing Stop Seviyesi:** {stop_fiyat:.2f} TL\n\n*(En yüksek fiyat olan {max_price:.2f} TL'den %{stop_loss_pct} geride)*")
+            st.info(f"🪜 **Güncel Trailing Stop Seviyesi:** {stop_fiyat:.2f} TL\n\n*(Alış tarihinden beri görülen en yüksek fiyat olan {max_price:.2f} TL'den %{stop_loss_pct} geride)*")
             
         # SAT Sinyali Kontrolleri
         sat_nedenleri = []
