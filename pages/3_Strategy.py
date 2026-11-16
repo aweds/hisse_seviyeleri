@@ -13,19 +13,29 @@ from levels import rsi
 
 st.set_page_config(page_title="Strateji Testi", page_icon="🧪", layout="wide")
 st.title("🧪 Bilimsel Strateji Backtest")
-st.caption("Tüm Profesyonel İndikatörler ve Sermaye Simülasyonu")
+st.caption("Tüm Profesyonel İndikatörler ve Zaman Dilimi Seçenekleri")
 
 # --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
     st.header("⚙️ Strateji Ayarları")
     raw = st.text_input("Hisse", "ARDYZ")
-    period = st.selectbox("Test Periyodu", ["1y", "2y", "5y"], index=1)
     
+    # ZAMAN DİLİMİ SEÇİMİ
+    zaman_dilimi = st.selectbox("Zaman Dilimi (Periyot)", ["Günlük (1d)", "Saatlik (1h)", "15 Dakika (15m)"], index=0)
+    
+    # Veri periyodunu zaman dilimine göre otomatik ayarla
+    if zaman_dilimi == "Günlük (1d)":
+        interval, period = "1d", "2y"
+    elif zaman_dilimi == "Saatlik (1h)":
+        interval, period = "1h", "1y"
+    else:
+        interval, period = "15m", "60d" # Yahoo Finance 15m için max 60 gün verir
+
     st.markdown("---")
     gosterge_secimi = st.radio("Ana Gösterge", ["RSI", "Stoch RSI"])
     varsayilan_esik = 30
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
-    ind_length = st.number_input("Gösterge Periyodu", value=14)
+    ind_length = st.number_input("Gösterge Periyodu (Bar)", value=14)
     
     st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA (10)", value=True)
@@ -42,9 +52,9 @@ with st.sidebar:
     use_crsi = st.checkbox("Connors RSI < 20", value=False)
     
     st.markdown("**Hacim & Volatilite Filtreleri**")
-    use_volume = st.checkbox("Hacim > Ortalama Hacim (20g)", value=False)
+    use_volume = st.checkbox("Hacim > Ortalama Hacim (20 Bar)", value=False)
     use_vwap = st.checkbox("Fiyat > VWAP", value=False)
-    use_obv = st.checkbox("OBV > 20 Günlük Ortalaması", value=False)
+    use_obv = st.checkbox("OBV > 20 Barlık Ortalaması", value=False)
     use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
     use_adx = st.checkbox("ADX > 25 (Güçlü Trend)", value=False)
     use_mass = st.checkbox("Mass Index < 27 (Sıkışma)", value=False)
@@ -55,7 +65,7 @@ with st.sidebar:
     komisyon_pct = st.number_input("Komisyon Oranı (Tek Yön) %", value=0.0, step=0.1)
     
     st.markdown("**Çıkış Stratejisi**")
-    hold_days = st.number_input("Maksimum Gün", value=15)
+    hold_days = st.number_input("Maksimum Bar (Gün/Saat/Dk)", value=15, help="Seçilen zaman dilimine göre kaç bar sonra çıkılacağını belirler.")
     stop_loss_pct = st.number_input("Zarar Durdur (Stop-Loss) %", value=10.0, step=1.0)
     take_profit_pct = st.number_input("Kâr Al (Take-Profit) %", value=25.0, step=1.0)
     
@@ -65,9 +75,10 @@ ticker = normalize_ticker(raw)
 
 # --- HESAPLAMA KISMI ---
 if run:
-    df = fetch_ohlcv(ticker, interval="1d", period=period)
+    df = fetch_ohlcv(ticker, interval=interval, period=period)
+    
     if df.empty or len(df) < 100:
-        st.error("Yetersiz veri.")
+        st.error(f"Yetersiz veri. {zaman_dilimi} için en az 100 bar gerekiyor. Lütfen daha uzun bir periyot seçin.")
         st.stop()
         
     # Tüm İndikatörleri Hesapla
@@ -96,7 +107,7 @@ if run:
     current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
     base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
     
-    # Filtre Şartları (Hepsi varsayılan olarak True döner, seçilirse koşula bakar)
+    # Filtre Şartları
     kama_cond = (df["Close"] > df["KAMA"]) if use_kama else pd.Series(True, index=df.index)
     wilders_cond = (df["Close"] > df["Wilders"]) if use_wilders else pd.Series(True, index=df.index)
     ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
@@ -105,7 +116,6 @@ if run:
     coppock_cond = (df["Coppock"] > 0) if use_coppock else pd.Series(True, index=df.index)
     
     stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
-    ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
     
     if use_macd:
         macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
@@ -148,7 +158,7 @@ if run:
         current_date = df.index[i]
         
         if in_position:
-            days_held = i - entry_idx
+            bars_held = i - entry_idx
             low_price = df["Low"].iloc[i]
             high_price = df["High"].iloc[i]
             close_price = df["Close"].iloc[i]
@@ -166,7 +176,7 @@ if run:
                 exit_price = open_price if open_price >= target_price else target_price
                 exit_reason = "Kâr Al"
                 exit_triggered = True
-            elif days_held >= hold_days:
+            elif bars_held >= hold_days:
                 exit_price = close_price
                 exit_reason = "Süre Doldu"
                 exit_triggered = True
@@ -180,15 +190,15 @@ if run:
                 kasa_nakit += net_ele_gecen
                 
                 results.append({
-                    "Giriş Tarihi": df.index[entry_idx].strftime("%Y-%m-%d"),
-                    "Çıkış Tarihi": current_date.strftime("%Y-%m-%d"),
+                    "Giriş Zamanı": df.index[entry_idx].strftime("%Y-%m-%d %H:%M"),
+                    "Çıkış Zamanı": current_date.strftime("%Y-%m-%d %H:%M"),
                     "Giriş Fiyatı": round(entry_price, 2),
                     "Çıkış Fiyatı": round(exit_price, 2),
                     "Lot": lot,
                     "Net Kâr/Zarar (TL)": round(net_kar_tl, 2),
                     "Getiri (%)": round(getiri_pct, 2),
                     "Çıkış Nedeni": exit_reason,
-                    "Gün": days_held,
+                    "Bar Süresi": bars_held,
                     "Portföy Değeri": round(kasa_nakit, 2)
                 })
                 in_position = False
@@ -221,7 +231,7 @@ if run:
     st.session_state["bt_ticker"] = ticker
     st.session_state["bt_baslangic"] = baslangic_sermayesi
     st.session_state["bt_nihai"] = nihai_portfoy
-    st.session_state["bt_ind_name"] = gosterge_secimi
+    st.session_state["bt_ind_name"] = f"{gosterge_secimi} ({zaman_dilimi})"
     st.session_state["bt_in_position"] = in_position
     st.session_state["bt_active_details"] = {
         "entry": entry_price if in_position else df["Close"].iloc[-1],
@@ -244,7 +254,7 @@ if "bt_res_df" in st.session_state:
     toplam_getiri = (toplam_kar / baslangic) * 100
     win_rate = (res_df["Net Kâr/Zarar (TL)"] > 0).mean() * 100
     
-    st.subheader(f"📌 {ticker} — Portföy Sonuçları")
+    st.subheader(f"📌 {ticker} — {ind_name} Portföy Sonuçları")
     
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Başlangıç Sermayesi", f"{baslangic:,.0f} TL")
@@ -263,12 +273,12 @@ if "bt_res_df" in st.session_state:
     colC.info(f"📦 **Lot & Potansiyel**\n\nMevcut/Alınacak Lot: {act['lot']}\n\nHedefteki Kâr: {act['lot'] * (act['target']-act['entry']):,.0f} TL")
 
     st.markdown("### 📈 Sermaye Büyüme Grafiği")
-    eq_df = res_df[["Çıkış Tarihi", "Portföy Değeri"]].copy()
+    eq_df = res_df[["Çıkış Zamanı", "Portföy Değeri"]].copy()
     eq_df.loc[-1] = ["Başlangıç", baslangic]
     eq_df.index = eq_df.index + 1
     eq_df = eq_df.sort_index()
     
-    fig_eq = px.line(eq_df, x="Çıkış Tarihi", y="Portföy Değeri", markers=True, title="Bileşik Getiri")
+    fig_eq = px.line(eq_df, x="Çıkış Zamanı", y="Portföy Değeri", markers=True, title="Bileşik Getiri")
     fig_eq.update_traces(line_color="#2e7d32", line_width=3)
     st.plotly_chart(fig_eq, use_container_width=True)
 
