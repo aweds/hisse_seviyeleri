@@ -6,7 +6,8 @@ import streamlit as st
 from data import fetch_ohlcv, normalize_ticker
 from indicators import (
     kama, stochastic_rsi, wilders_smoothing, macd, ema, 
-    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend
+    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend,
+    alma, fisher_transform, connors_rsi, coppock_curve, mass_index
 )
 from levels import rsi
 
@@ -26,20 +27,27 @@ with st.sidebar:
     esik = st.number_input("Aşırı Satım Eşiği (Altı)", value=varsayilan_esik)
     ind_length = st.number_input("Gösterge Periyodu", value=14)
     
-    st.markdown("**Filtreler (Teyitler)**")
+    st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA (10)", value=True)
     use_wilders = st.checkbox("Fiyat > Wilders (14)", value=False)
-    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
-    
-    use_macd = st.checkbox("MACD > Sinyal Çizgisi", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
-    use_volume = st.checkbox("Hacim > Ortalama Hacim (20g)", value=False)
+    use_alma = st.checkbox("Fiyat > ALMA (10)", value=False)
+    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
+    use_coppock = st.checkbox("Coppock Curve > 0", value=False)
     
-    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
-    use_adx = st.checkbox("ADX > 25 (Güçlü Trend)", value=False)
+    st.markdown("**Momentum Filtreleri**")
+    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
+    use_macd = st.checkbox("MACD > Sinyal Çizgisi", value=False)
+    use_fisher = st.checkbox("Fisher > Sinyal Çizgisi", value=False)
+    use_crsi = st.checkbox("Connors RSI < 20", value=False)
+    
+    st.markdown("**Hacim & Volatilite Filtreleri**")
+    use_volume = st.checkbox("Hacim > Ortalama Hacim (20g)", value=False)
     use_vwap = st.checkbox("Fiyat > VWAP", value=False)
     use_obv = st.checkbox("OBV > 20 Günlük Ortalaması", value=False)
-    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
+    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
+    use_adx = st.checkbox("ADX > 25 (Güçlü Trend)", value=False)
+    use_mass = st.checkbox("Mass Index < 27 (Sıkışma)", value=False)
     
     st.markdown("---")
     st.markdown("**💰 Sermaye ve Risk**")
@@ -77,16 +85,27 @@ if run:
     df["OBV"] = calculate_obv(df)
     df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
     
+    # Yeni İndikatörler
+    df["ALMA"] = alma(df["Close"], 10)
+    df["Fisher"], df["Fisher_Signal"] = fisher_transform(df)
+    df["CRSI"] = connors_rsi(df["Close"])
+    df["Coppock"] = coppock_curve(df["Close"])
+    df["Mass_Index"] = mass_index(df)
+    
     # Sinyal Mantığı
     current_ind = df["RSI"] if gosterge_secimi == "RSI" else df["Stoch_RSI"]
     base_signal = (current_ind.shift(1) < esik) & (current_ind >= esik)
     
-    # Filtre Şartları
+    # Filtre Şartları (Hepsi varsayılan olarak True döner, seçilirse koşula bakar)
     kama_cond = (df["Close"] > df["KAMA"]) if use_kama else pd.Series(True, index=df.index)
     wilders_cond = (df["Close"] > df["Wilders"]) if use_wilders else pd.Series(True, index=df.index)
+    ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
+    alma_cond = (df["Close"] > df["ALMA"]) if use_alma else pd.Series(True, index=df.index)
+    supertrend_cond = (df["ST_Direction"] == 1) if use_supertrend else pd.Series(True, index=df.index)
+    coppock_cond = (df["Coppock"] > 0) if use_coppock else pd.Series(True, index=df.index)
+    
     stoch_rsi_cond = (df["Stoch_RSI"] < df["RSI"]) if use_stoch_below_rsi else pd.Series(True, index=df.index)
     ema50_cond = (df["Close"] > df["EMA50"]) if use_ema50 else pd.Series(True, index=df.index)
-    volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
     
     if use_macd:
         macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
@@ -95,17 +114,22 @@ if run:
     else:
         macd_cond = pd.Series(True, index=df.index)
 
-    bollinger_cond = (df["Close"] > df["BB_Mid"]) if use_bollinger else pd.Series(True, index=df.index)
-    adx_cond = (df["ADX"] > 25) if use_adx else pd.Series(True, index=df.index)
+    fisher_cond = (df["Fisher"] > df["Fisher_Signal"]) if use_fisher else pd.Series(True, index=df.index)
+    crsi_cond = (df["CRSI"] < 20) if use_crsi else pd.Series(True, index=df.index)
+    
+    volume_cond = (df["Volume"] > df["Vol_SMA"]) if use_volume else pd.Series(True, index=df.index)
     vwap_cond = (df["Close"] > df["VWAP"]) if use_vwap else pd.Series(True, index=df.index)
     obv_cond = (df["OBV"] > df["OBV"].rolling(20).mean()) if use_obv else pd.Series(True, index=df.index)
-    supertrend_cond = (df["ST_Direction"] == 1) if use_supertrend else pd.Series(True, index=df.index)
+    bollinger_cond = (df["Close"] > df["BB_Mid"]) if use_bollinger else pd.Series(True, index=df.index)
+    adx_cond = (df["ADX"] > 25) if use_adx else pd.Series(True, index=df.index)
+    mass_cond = (df["Mass_Index"] < 27) if use_mass else pd.Series(True, index=df.index)
     
     # Nihai Sinyal
     df["Signal"] = (
         base_signal & kama_cond & wilders_cond & stoch_rsi_cond & 
         macd_cond & ema50_cond & volume_cond & 
-        bollinger_cond & adx_cond & vwap_cond & obv_cond & supertrend_cond
+        bollinger_cond & adx_cond & vwap_cond & obv_cond & supertrend_cond &
+        alma_cond & fisher_cond & crsi_cond & coppock_cond & mass_cond
     )
     
     results = []
