@@ -4,7 +4,8 @@ import streamlit as st
 from data import fetch_ohlcv, normalize_ticker
 from indicators import (
     kama, stochastic_rsi, wilders_smoothing, macd, ema, 
-    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend
+    bollinger_bands, calculate_adx, calculate_vwap, calculate_obv, calculate_supertrend,
+    alma, fisher_transform, connors_rsi, coppock_curve, mass_index
 )
 from levels import rsi
 
@@ -20,20 +21,27 @@ with st.sidebar:
     gosterge_secimi = st.radio("Gösterge", ["RSI", "Stoch RSI"])
     esik = st.number_input("Aşırı Satım Eşiği", value=30)
     
-    st.markdown("**Filtreler**")
+    st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA", value=True)
     use_wilders = st.checkbox("Fiyat > Wilders", value=False)
-    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
-    
-    use_macd = st.checkbox("MACD > Sinyal", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
-    use_volume = st.checkbox("Hacim > Ort. Hacim", value=False)
+    use_alma = st.checkbox("Fiyat > ALMA (10)", value=False)
+    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
+    use_coppock = st.checkbox("Coppock Curve > 0", value=False)
     
-    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
-    use_adx = st.checkbox("ADX > 25", value=False)
+    st.markdown("**Momentum Filtreleri**")
+    use_stoch_below_rsi = st.checkbox("Stoch RSI < RSI", value=True)
+    use_macd = st.checkbox("MACD > Sinyal", value=False)
+    use_fisher = st.checkbox("Fisher > Sinyal Çizgisi", value=False)
+    use_crsi = st.checkbox("Connors RSI < 20", value=False)
+    
+    st.markdown("**Hacim & Volatilite**")
+    use_volume = st.checkbox("Hacim > Ort. Hacim", value=False)
     use_vwap = st.checkbox("Fiyat > VWAP", value=False)
     use_obv = st.checkbox("OBV > 20 Günlük Ort.", value=False)
-    use_supertrend = st.checkbox("Supertrend Yönü = Al", value=False)
+    use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
+    use_adx = st.checkbox("ADX > 25", value=False)
+    use_mass = st.checkbox("Mass Index < 27", value=False)
     
     st.markdown("---")
     st.markdown("**Risk Yönetimi**")
@@ -140,6 +148,12 @@ if tara:
         df["OBV"] = calculate_obv(df)
         df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
         
+        df["ALMA"] = alma(df["Close"], 10)
+        df["Fisher"], df["Fisher_Signal"] = fisher_transform(df)
+        df["CRSI"] = connors_rsi(df["Close"])
+        df["Coppock"] = coppock_curve(df["Close"])
+        df["Mass_Index"] = mass_index(df)
+        
         son_bar = df.iloc[-1]
         onceki_bar = df.iloc[-2]
         
@@ -150,9 +164,12 @@ if tara:
         
         kama_cond = (son_bar["Close"] > son_bar["KAMA"]) if use_kama else True
         wilders_cond = (son_bar["Close"] > son_bar["Wilders"]) if use_wilders else True
-        stoch_rsi_cond = (son_bar["Stoch_RSI"] < son_bar["RSI"]) if use_stoch_below_rsi else True
         ema50_cond = (son_bar["Close"] > son_bar["EMA50"]) if use_ema50 else True
-        volume_cond = (son_bar["Volume"] > son_bar["Vol_SMA"]) if use_volume else True
+        alma_cond = (son_bar["Close"] > son_bar["ALMA"]) if use_alma else True
+        supertrend_cond = (son_bar["ST_Direction"] == 1) if use_supertrend else True
+        coppock_cond = (son_bar["Coppock"] > 0) if use_coppock else True
+        
+        stoch_rsi_cond = (son_bar["Stoch_RSI"] < son_bar["RSI"]) if use_stoch_below_rsi else True
         
         if use_macd:
             macd_cross = (df["MACD"] > df["MACD_Signal"]) & (df["MACD"].shift(1) <= df["MACD_Signal"].shift(1))
@@ -161,16 +178,21 @@ if tara:
         else:
             macd_cond = True
 
-        bollinger_cond = (son_bar["Close"] > son_bar["BB_Mid"]) if use_bollinger else True
-        adx_cond = (son_bar["ADX"] > 25) if use_adx else True
+        fisher_cond = (son_bar["Fisher"] > son_bar["Fisher_Signal"]) if use_fisher else True
+        crsi_cond = (son_bar["CRSI"] < 20) if use_crsi else True
+        
+        volume_cond = (son_bar["Volume"] > son_bar["Vol_SMA"]) if use_volume else True
         vwap_cond = (son_bar["Close"] > son_bar["VWAP"]) if use_vwap else True
         obv_cond = (son_bar["OBV"] > df["OBV"].rolling(20).mean().iloc[-1]) if use_obv else True
-        supertrend_cond = (son_bar["ST_Direction"] == 1) if use_supertrend else True
+        bollinger_cond = (son_bar["Close"] > son_bar["BB_Mid"]) if use_bollinger else True
+        adx_cond = (son_bar["ADX"] > 25) if use_adx else True
+        mass_cond = (son_bar["Mass_Index"] < 27) if use_mass else True
         
         durum = "BEKLE"
         if (ind_sinyali and kama_cond and wilders_cond and stoch_rsi_cond and macd_cond 
             and ema50_cond and volume_cond and bollinger_cond and adx_cond and vwap_cond 
-            and obv_cond and supertrend_cond):
+            and obv_cond and supertrend_cond and alma_cond and fisher_cond and crsi_cond 
+            and coppock_cond and mass_cond):
             durum = "AL"
         elif current_ind < esik:
             durum = "İZLE"
