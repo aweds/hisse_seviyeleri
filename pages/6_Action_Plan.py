@@ -28,10 +28,10 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**Ana Göstergeler (AL için)**")
-    use_rsi = st.checkbox("RSI Kullan", value=True)
+    use_rsi = st.checkbox("RSI Kullan", value=False) # Varsayılan kapalı yaptım
     rsi_esik = st.number_input("RSI Aşırı Satım Eşiği", value=30, key="rsi_esik")
     
-    use_stoch = st.checkbox("Stoch RSI Kullan", value=True)
+    use_stoch = st.checkbox("Stoch RSI Kullan", value=False) # Varsayılan kapalı yaptım
     stoch_esik = st.number_input("Stoch RSI Aşırı Satım Eşiği", value=20, key="stoch_esik")
 
     st.markdown("---")
@@ -87,6 +87,9 @@ onceki_bar = df.iloc[-2]
 # --- SİNYAL VE TEŞHİS LİSTESİ ---
 teshisler = []
 al_sartlari_uygun = True
+
+# Herhangi bir filtre seçili mi kontrolü
+herhangi_bir_filtre = use_rsi or use_stoch or use_kama or use_ema50 or use_wilders or use_alma or use_supertrend or use_macd or use_volume or use_obv
 
 # 1. RSI Kontrolü
 if use_rsi:
@@ -144,7 +147,10 @@ with col1:
     st.markdown("### 📌 Mevcut Durum")
     st.info(f"**Hisse:** {ticker}\n\n**Periyot:** {zaman_dilimi}\n\n**Güncel Fiyat:** {fiyat:.2f} TL")
     
-    if has_position:
+    if not herhangi_bir_filtre:
+        st.warning("### ⚠️ FİLTRE SEÇİLMEDİ\nLütfen sol menüden en az bir gösterge veya trend filtresi seçin.")
+    
+    elif has_position:
         # --- SAT / TUT MANTIĞI ---
         stop_fiyat = entry_price * (1 - stop_loss_pct / 100)
         hedef_fiyat = entry_price * (1 + take_profit_pct / 100)
@@ -163,10 +169,11 @@ with col1:
             sat_nedenleri.append("Fiyat Stop-Loss seviyesinin altında!")
         if fiyat >= hedef_fiyat:
             sat_nedenleri.append("Fiyat Kâr Al hedefine ulaştı!")
-        # Aşırı Alımdan Dönüş (RSI > 70 veya Stoch > 80 aşağı keserse)
-        if (onceki_bar["RSI"] > 70) and (son_bar["RSI"] < 70):
+        
+        # Eğer RSI veya Stoch RSI açıksa, aşırı alımdan dönüş var mı diye bak
+        if use_rsi and (onceki_bar["RSI"] > 70) and (son_bar["RSI"] < 70):
             sat_nedenleri.append("RSI 70'in altına indi (Momentum kaybı).")
-        if (onceki_bar["Stoch_RSI"] > 80) and (son_bar["Stoch_RSI"] < 80):
+        if use_stoch and (onceki_bar["Stoch_RSI"] > 80) and (son_bar["Stoch_RSI"] < 80):
             sat_nedenleri.append("Stoch RSI 80'in altına indi (Aşırı alımdan çıkış).")
             
         if sat_nedenleri:
@@ -175,8 +182,8 @@ with col1:
             st.warning("### 🟡 TUT SİNYALİ\nTrend devam ediyor. Pozisyonu koruyabilirsiniz.")
             
     else:
-        # --- AL / BEKLE MANTIĞI ---
-        if al_sartlari_uygun and (use_rsi or use_stoch):
+        # --- AL / BEKLE MANTIĞI (RSI şartı kaldırıldı) ---
+        if al_sartlari_uygun:
             st.success("### 🟢 AL SİNYALİ VAR!\nSeçtiğiniz tüm filtreler uyuşuyor. İşlem yapabilirsiniz.")
             
             stop_fiyat = fiyat * (1 - stop_loss_pct / 100)
@@ -197,16 +204,19 @@ with col1:
 
 with col2:
     st.markdown("### 🔍 Teşhis Tablosu (Hangi Filtre Neden Uymuyor?)")
-    teshis_df = pd.DataFrame(teshisler)
-    
-    def renklendir(val):
-        if "✅" in str(val): return 'background-color: #d4edda; color: #155724; font-weight: bold'
-        elif "❌" in str(val): return 'background-color: #f8d7da; color: #721c24; font-weight: bold'
-        return ''
+    if teshisler:
+        teshis_df = pd.DataFrame(teshisler)
         
-    st.dataframe(
-        teshis_df.style.map(renklendir, subset=["Durum"]),
-        use_container_width=True,
-        hide_index=True,
-        height=600
-    )
+        def renklendir(val):
+            if "✅" in str(val): return 'background-color: #d4edda; color: #155724; font-weight: bold'
+            elif "❌" in str(val): return 'background-color: #f8d7da; color: #721c24; font-weight: bold'
+            return ''
+            
+        st.dataframe(
+            teshis_df.style.map(renklendir, subset=["Durum"]),
+            use_container_width=True,
+            hide_index=True,
+            height=600
+        )
+    else:
+        st.info("Teşhis edilecek bir filtre seçilmedi.")
