@@ -17,6 +17,15 @@ st.caption("Gelişmiş filtrelerle piyasayı tarayın ve portföyünüzü kontro
 with st.sidebar:
     st.header("⚙️ Ayarlar")
     
+    # ZAMAN DİLİMİ SEÇİMİ
+    zaman_dilimi = st.selectbox("Zaman Dilimi", ["Günlük (1d)", "Saatlik (1h)", "15 Dakika (15m)"], index=0)
+    if zaman_dilimi == "Günlük (1d)":
+        interval, period = "1d", "1y"
+    elif zaman_dilimi == "Saatlik (1h)":
+        interval, period = "1h", "6mo"
+    else:
+        interval, period = "15m", "1mo"
+
     st.markdown("**Ana Gösterge**")
     gosterge_secimi = st.radio("Gösterge", ["RSI", "Stoch RSI"])
     esik = st.number_input("Aşırı Satım Eşiği", value=30)
@@ -38,7 +47,7 @@ with st.sidebar:
     st.markdown("**Hacim & Volatilite**")
     use_volume = st.checkbox("Hacim > Ort. Hacim", value=False)
     use_vwap = st.checkbox("Fiyat > VWAP", value=False)
-    use_obv = st.checkbox("OBV > 20 Günlük Ort.", value=False)
+    use_obv = st.checkbox("OBV > 20 Barlık Ort.", value=False)
     use_bollinger = st.checkbox("Fiyat > Bollinger Orta Bandı", value=False)
     use_adx = st.checkbox("ADX > 25", value=False)
     use_mass = st.checkbox("Mass Index < 27", value=False)
@@ -75,7 +84,7 @@ st.session_state["portfolio"] = edited_df
 st.divider()
 
 # --- 2. BÖLÜM: TARAMA MOTORU ---
-tara = st.button("🔄 Piyasayı Tara ve Portföyü Kontrol Et", type="primary", use_container_width=True)
+tara = st.button(f"🔄 Piyasayı Tara ve Portföyü Kontrol Et ({zaman_dilimi})", type="primary", use_container_width=True)
 
 if tara:
     portfoy_sonuclari = []
@@ -84,7 +93,7 @@ if tara:
             if pd.isna(row["Hisse"]) or pd.isna(row["Lot"]) or pd.isna(row["Alış Fiyatı"]) or row["Lot"] == 0:
                 continue
             ticker = normalize_ticker(str(row["Hisse"]))
-            df = fetch_ohlcv(ticker, interval="1d", period="1y")
+            df = fetch_ohlcv(ticker, interval=interval, period=period)
             if df.empty: continue
                 
             son_fiyat = df["Close"].iloc[-1]
@@ -129,7 +138,7 @@ if tara:
     
     for i, raw_ticker in enumerate(hisseler):
         ticker = normalize_ticker(raw_ticker)
-        df = fetch_ohlcv(ticker, interval="1d", period="1y")
+        df = fetch_ohlcv(ticker, interval=interval, period=period)
         
         if df.empty or len(df) < 50: continue
             
@@ -218,7 +227,7 @@ if tara:
         
     progress.empty()
 
-    st.subheader("📊 Tarama Sonuçları")
+    st.subheader(f"📊 Tarama Sonuçları ({zaman_dilimi})")
     col1, col2 = st.columns(2)
     
     with col1:
