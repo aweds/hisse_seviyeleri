@@ -13,7 +13,6 @@ st.set_page_config(page_title="Aksiyon Paneli", page_icon="🎯", layout="wide")
 st.title("🎯 Canlı Aksiyon ve Teşhis Paneli")
 st.caption("Seçtiğiniz filtrelerin anlık durumunu görün, AL / TUT / SAT sinyallerini teşhis edin.")
 
-# --- KENAR ÇUBUĞU (SIDEBAR) AYARLARI ---
 with st.sidebar:
     st.header("⚙️ Analiz Ayarları")
     raw = st.text_input("Hisse Kodu", "ASELS")
@@ -37,14 +36,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA", value=True)
-    
-    # YENİ EMA SEÇENEKLERİ
     use_ema20 = st.checkbox("Fiyat > EMA 20", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
     use_ema100 = st.checkbox("Fiyat > EMA 100", value=False)
     use_ema200 = st.checkbox("Fiyat > EMA 200", value=False)
     use_golden_cross = st.checkbox("Altın Kesişim (EMA 20 > EMA 50)", value=False)
-    
     use_wilders = st.checkbox("Fiyat > Wilders", value=False)
     use_alma = st.checkbox("Fiyat > ALMA", value=False)
     use_supertrend = st.checkbox("Supertrend = Al", value=False)
@@ -60,12 +56,16 @@ with st.sidebar:
     if has_position:
         entry_price = st.number_input("Alış Maliyetim (TL)", value=100.0)
         entry_lot = st.number_input("Lot Sayısı", value=100)
+        highest_price_since_entry = st.number_input("İşleme Girdiğimden Beri Gördüğü En Yüksek Fiyat", value=float(entry_price), help="Trailing stop hesaplaması için gereklidir. Kâr ettiyseniz buraya güncel yüksek fiyatı girin.")
     
     st.markdown("---")
     st.markdown("**Risk Yönetimi**")
     sermaye = st.number_input("Toplam Sermaye (TL)", value=100000)
     risk_pct = st.number_input("İşlem Başı Risk (%)", value=2.0)
-    stop_loss_pct = st.number_input("Stop-Loss (%)", value=10.0)
+    
+    # TRAILING STOP SEÇENEĞİ
+    use_trailing = st.checkbox("🪜 İz Süren Zarar Durdur Kullan", value=False)
+    stop_loss_pct = st.number_input("Zarar Durdur / Takip Mesafesi (%)", value=10.0)
     take_profit_pct = st.number_input("Kâr Al Hedefi (%)", value=25.0)
 
 # --- HESAPLAMA MOTORU ---
@@ -76,17 +76,13 @@ if df.empty or len(df) < 50:
     st.error("Yetersiz veri.")
     st.stop()
 
-# Göstergeleri Hesapla
 df["RSI"] = rsi(df, 14)
 df["Stoch_RSI"] = stochastic_rsi(df["Close"], 14)
 df["KAMA"] = kama(df["Close"], 10)
-
-# Tüm EMA'ları hesapla
 df["EMA20"] = ema(df["Close"], 20)
 df["EMA50"] = ema(df["Close"], 50)
 df["EMA100"] = ema(df["Close"], 100)
 df["EMA200"] = ema(df["Close"], 200)
-
 df["Wilders"] = wilders_smoothing(df["Close"], 14)
 df["ALMA"] = alma(df["Close"], 10)
 df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
@@ -97,60 +93,52 @@ df["OBV"] = calculate_obv(df)
 son_bar = df.iloc[-1]
 onceki_bar = df.iloc[-2]
 
-# --- SİNYAL VE TEŞHİS LİSTESİ ---
 teshisler = []
 al_sartlari_uygun = True
 
-# Herhangi bir filtre seçili mi kontrolü
 herhangi_bir_filtre = (use_rsi or use_stoch or use_kama or use_ema20 or use_ema50 or 
                        use_ema100 or use_ema200 or use_golden_cross or use_wilders or 
                        use_alma or use_supertrend or use_macd or use_volume or use_obv)
 
-# 1. RSI Kontrolü
+# RSI
 if use_rsi:
     rsi_kesisti = (onceki_bar["RSI"] < rsi_esik) and (son_bar["RSI"] >= rsi_esik)
     if not rsi_kesisti: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "RSI", "Durum": "✅ Uygun" if rsi_kesisti else "❌ Uygun Değil", "Mevcut Değer": f"Dün: {onceki_bar['RSI']:.1f} | Bugün: {son_bar['RSI']:.1f}", "Şart": f"{rsi_esik} seviyesini yukarı kesmeli"})
 
-# 2. Stoch RSI Kontrolü
+# Stoch RSI
 if use_stoch:
     stoch_kesisti = (onceki_bar["Stoch_RSI"] < stoch_esik) and (son_bar["Stoch_RSI"] >= stoch_esik)
     if not stoch_kesisti: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "Stoch RSI", "Durum": "✅ Uygun" if stoch_kesisti else "❌ Uygun Değil", "Mevcut Değer": f"Dün: {onceki_bar['Stoch_RSI']:.1f} | Bugün: {son_bar['Stoch_RSI']:.1f}", "Şart": f"{stoch_esik} seviyesini yukarı kesmeli"})
 
-# 3. Trend ve Filtreler
+# Trend & Filtreler
 if use_kama:
     ok = son_bar["Close"] > son_bar["KAMA"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "KAMA", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | KAMA: {son_bar['KAMA']:.2f}", "Şart": "Fiyat > KAMA"})
 
-# EMA Kontrolleri
 if use_ema20:
     ok = son_bar["Close"] > son_bar["EMA20"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "EMA 20", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA20: {son_bar['EMA20']:.2f}", "Şart": "Fiyat > EMA 20"})
-
 if use_ema50:
     ok = son_bar["Close"] > son_bar["EMA50"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "EMA 50", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA50: {son_bar['EMA50']:.2f}", "Şart": "Fiyat > EMA 50"})
-
 if use_ema100:
     ok = son_bar["Close"] > son_bar["EMA100"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "EMA 100", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA100: {son_bar['EMA100']:.2f}", "Şart": "Fiyat > EMA 100"})
-
 if use_ema200:
     ok = son_bar["Close"] > son_bar["EMA200"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "EMA 200", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA200: {son_bar['EMA200']:.2f}", "Şart": "Fiyat > EMA 200"})
-
 if use_golden_cross:
     ok = son_bar["EMA20"] > son_bar["EMA50"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "Altın Kesişim", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"EMA20: {son_bar['EMA20']:.2f} | EMA50: {son_bar['EMA50']:.2f}", "Şart": "EMA 20 > EMA 50"})
 
-# Diğer Filtreler
 if use_wilders:
     ok = son_bar["Close"] > son_bar["Wilders"]
     if not ok: al_sartlari_uygun = False
@@ -179,7 +167,6 @@ if use_obv:
 # --- POZİSYON DURUMUNA GÖRE KARAR MEKANİZMASI ---
 fiyat = son_bar["Close"]
 
-# --- EKRAN ÇIKTISI ---
 col1, col2 = st.columns([1, 2.5])
 
 with col1:
@@ -191,7 +178,18 @@ with col1:
     
     elif has_position:
         # --- SAT / TUT MANTIĞI ---
-        stop_fiyat = entry_price * (1 - stop_loss_pct / 100)
+        base_stop = entry_price * (1 - stop_loss_pct / 100)
+        
+        # Trailing Stop Hesaplaması
+        if use_trailing:
+            # Eğer girilen en yüksek fiyat maliyetin altındaysa maliyeti baz al
+            max_price = max(highest_price_since_entry, entry_price)
+            stop_fiyat = max_price * (1 - stop_loss_pct / 100)
+            # Trailing stop asla başlangıç stopunun altına inemez
+            stop_fiyat = max(stop_fiyat, base_stop)
+        else:
+            stop_fiyat = base_stop
+            
         hedef_fiyat = entry_price * (1 + take_profit_pct / 100)
         anlik_kar_zarar = (fiyat - entry_price) * entry_lot
         anlik_yuzde = ((fiyat / entry_price) - 1) * 100
@@ -202,10 +200,13 @@ with col1:
         else:
             st.error(f"Zarar: {anlik_kar_zarar:,.2f} TL (%{anlik_yuzde:.2f})")
             
+        if use_trailing:
+            st.info(f"🪜 **Güncel Trailing Stop Seviyesi:** {stop_fiyat:.2f} TL\n\n*(En yüksek fiyat olan {max_price:.2f} TL'den %{stop_loss_pct} geride)*")
+            
         # SAT Sinyali Kontrolleri
         sat_nedenleri = []
         if fiyat <= stop_fiyat:
-            sat_nedenleri.append("Fiyat Stop-Loss seviyesinin altında!")
+            sat_nedenleri.append(f"Fiyat Stop seviyesinin ({stop_fiyat:.2f}) altında!")
         if fiyat >= hedef_fiyat:
             sat_nedenleri.append("Fiyat Kâr Al hedefine ulaştı!")
         
@@ -234,7 +235,7 @@ with col1:
             
             st.markdown(f"""
             *   **Giriş Fiyatı:** {fiyat:.2f} TL
-            *   **Stop-Loss:** {stop_fiyat:.2f} TL
+            *   **İlk Stop-Loss:** {stop_fiyat:.2f} TL
             *   **Kâr Al:** {hedef_fiyat:.2f} TL
             *   **Alınacak Lot:** {lot}
             *   **Risk (TL):** {risk_tutari:,.0f} TL
