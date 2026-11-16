@@ -28,16 +28,23 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("**Ana Göstergeler (AL için)**")
-    use_rsi = st.checkbox("RSI Kullan", value=False) # Varsayılan kapalı yaptım
+    use_rsi = st.checkbox("RSI Kullan", value=False)
     rsi_esik = st.number_input("RSI Aşırı Satım Eşiği", value=30, key="rsi_esik")
     
-    use_stoch = st.checkbox("Stoch RSI Kullan", value=False) # Varsayılan kapalı yaptım
+    use_stoch = st.checkbox("Stoch RSI Kullan", value=False)
     stoch_esik = st.number_input("Stoch RSI Aşırı Satım Eşiği", value=20, key="stoch_esik")
 
     st.markdown("---")
     st.markdown("**Trend Filtreleri**")
     use_kama = st.checkbox("Fiyat > KAMA", value=True)
+    
+    # YENİ EMA SEÇENEKLERİ
+    use_ema20 = st.checkbox("Fiyat > EMA 20", value=False)
     use_ema50 = st.checkbox("Fiyat > EMA 50", value=False)
+    use_ema100 = st.checkbox("Fiyat > EMA 100", value=False)
+    use_ema200 = st.checkbox("Fiyat > EMA 200", value=False)
+    use_golden_cross = st.checkbox("Altın Kesişim (EMA 20 > EMA 50)", value=False)
+    
     use_wilders = st.checkbox("Fiyat > Wilders", value=False)
     use_alma = st.checkbox("Fiyat > ALMA", value=False)
     use_supertrend = st.checkbox("Supertrend = Al", value=False)
@@ -73,7 +80,13 @@ if df.empty or len(df) < 50:
 df["RSI"] = rsi(df, 14)
 df["Stoch_RSI"] = stochastic_rsi(df["Close"], 14)
 df["KAMA"] = kama(df["Close"], 10)
+
+# Tüm EMA'ları hesapla
+df["EMA20"] = ema(df["Close"], 20)
 df["EMA50"] = ema(df["Close"], 50)
+df["EMA100"] = ema(df["Close"], 100)
+df["EMA200"] = ema(df["Close"], 200)
+
 df["Wilders"] = wilders_smoothing(df["Close"], 14)
 df["ALMA"] = alma(df["Close"], 10)
 df["Supertrend"], df["ST_Direction"] = calculate_supertrend(df)
@@ -89,7 +102,9 @@ teshisler = []
 al_sartlari_uygun = True
 
 # Herhangi bir filtre seçili mi kontrolü
-herhangi_bir_filtre = use_rsi or use_stoch or use_kama or use_ema50 or use_wilders or use_alma or use_supertrend or use_macd or use_volume or use_obv
+herhangi_bir_filtre = (use_rsi or use_stoch or use_kama or use_ema20 or use_ema50 or 
+                       use_ema100 or use_ema200 or use_golden_cross or use_wilders or 
+                       use_alma or use_supertrend or use_macd or use_volume or use_obv)
 
 # 1. RSI Kontrolü
 if use_rsi:
@@ -108,10 +123,34 @@ if use_kama:
     ok = son_bar["Close"] > son_bar["KAMA"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "KAMA", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | KAMA: {son_bar['KAMA']:.2f}", "Şart": "Fiyat > KAMA"})
+
+# EMA Kontrolleri
+if use_ema20:
+    ok = son_bar["Close"] > son_bar["EMA20"]
+    if not ok: al_sartlari_uygun = False
+    teshisler.append({"Gösterge": "EMA 20", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA20: {son_bar['EMA20']:.2f}", "Şart": "Fiyat > EMA 20"})
+
 if use_ema50:
     ok = son_bar["Close"] > son_bar["EMA50"]
     if not ok: al_sartlari_uygun = False
     teshisler.append({"Gösterge": "EMA 50", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA50: {son_bar['EMA50']:.2f}", "Şart": "Fiyat > EMA 50"})
+
+if use_ema100:
+    ok = son_bar["Close"] > son_bar["EMA100"]
+    if not ok: al_sartlari_uygun = False
+    teshisler.append({"Gösterge": "EMA 100", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA100: {son_bar['EMA100']:.2f}", "Şart": "Fiyat > EMA 100"})
+
+if use_ema200:
+    ok = son_bar["Close"] > son_bar["EMA200"]
+    if not ok: al_sartlari_uygun = False
+    teshisler.append({"Gösterge": "EMA 200", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"Fiyat: {son_bar['Close']:.2f} | EMA200: {son_bar['EMA200']:.2f}", "Şart": "Fiyat > EMA 200"})
+
+if use_golden_cross:
+    ok = son_bar["EMA20"] > son_bar["EMA50"]
+    if not ok: al_sartlari_uygun = False
+    teshisler.append({"Gösterge": "Altın Kesişim", "Durum": "✅ Uygun" if ok else "❌ Uygun Değil", "Mevcut Değer": f"EMA20: {son_bar['EMA20']:.2f} | EMA50: {son_bar['EMA50']:.2f}", "Şart": "EMA 20 > EMA 50"})
+
+# Diğer Filtreler
 if use_wilders:
     ok = son_bar["Close"] > son_bar["Wilders"]
     if not ok: al_sartlari_uygun = False
@@ -170,11 +209,12 @@ with col1:
         if fiyat >= hedef_fiyat:
             sat_nedenleri.append("Fiyat Kâr Al hedefine ulaştı!")
         
-        # Eğer RSI veya Stoch RSI açıksa, aşırı alımdan dönüş var mı diye bak
         if use_rsi and (onceki_bar["RSI"] > 70) and (son_bar["RSI"] < 70):
             sat_nedenleri.append("RSI 70'in altına indi (Momentum kaybı).")
         if use_stoch and (onceki_bar["Stoch_RSI"] > 80) and (son_bar["Stoch_RSI"] < 80):
             sat_nedenleri.append("Stoch RSI 80'in altına indi (Aşırı alımdan çıkış).")
+        if use_golden_cross and (onceki_bar["EMA20"] >= onceki_bar["EMA50"]) and (son_bar["EMA20"] < son_bar["EMA50"]):
+            sat_nedenleri.append("Ölüm Kesişimi (EMA 20, EMA 50'nin altına indi).")
             
         if sat_nedenleri:
             st.error("### 🔴 SAT SİNYALİ!\n" + "\n".join(f"- {n}" for n in sat_nedenleri))
@@ -182,7 +222,7 @@ with col1:
             st.warning("### 🟡 TUT SİNYALİ\nTrend devam ediyor. Pozisyonu koruyabilirsiniz.")
             
     else:
-        # --- AL / BEKLE MANTIĞI (RSI şartı kaldırıldı) ---
+        # --- AL / BEKLE MANTIĞI ---
         if al_sartlari_uygun:
             st.success("### 🟢 AL SİNYALİ VAR!\nSeçtiğiniz tüm filtreler uyuşuyor. İşlem yapabilirsiniz.")
             
